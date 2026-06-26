@@ -26,7 +26,10 @@ fi
 LOG_DIR="$TARGET_REPO/.bqa-team/logs"
 REPORT_DIR="$TARGET_REPO/.bqa-team/processes"
 REPORT="$REPORT_DIR/process-supervisor-$(date +%Y%m%d-%H%M%S).md"
+PIDS_FILE="$REPORT_DIR/old-pids.txt"
+CANDIDATES_FILE="$REPORT_DIR/candidate-processes.txt"
 mkdir -p "$LOG_DIR" "$REPORT_DIR"
+: > "$PIDS_FILE"
 
 CONSENT="$TARGET_REPO/scripts/bqa_consent.sh"
 if [[ -x "$CONSENT" ]]; then
@@ -43,9 +46,10 @@ if [[ -f "$TEAM_REPO/scripts/bqa_selfheal_etl_pack.sh" ]]; then
   team_hash="$(shasum -a 256 "$TEAM_REPO/scripts/bqa_selfheal_etl_pack.sh" | awk '{print $1}')"
 fi
 
-mapfile -t candidates < <(ps -axo pid=,ppid=,command= | grep -E 'bqa_selfheal_etl_pack|bqa_team_evolve|bqa_agent_guard|bqa_team_orchestrator|codex exec' | grep -v grep || true)
+ps -axo pid=,ppid=,command= \
+  | grep -E 'bqa_selfheal_etl_pack|bqa_team_evolve|bqa_agent_guard|bqa_team_orchestrator|codex exec' \
+  | grep -v grep > "$CANDIDATES_FILE" || true
 
-old_pids=()
 {
   echo "# BQA Process Supervisor Report"
   echo
@@ -63,22 +67,21 @@ old_pids=()
   echo "## Candidate processes"
   echo
 
-  if (( ${#candidates[@]} == 0 )); then
+  if [[ ! -s "$CANDIDATES_FILE" ]]; then
     echo "No candidate BQA/Codex processes found."
   fi
 
-  for line in "${candidates[@]}"; do
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
     pid="$(awk '{print $1}' <<< "$line")"
     ppid="$(awk '{print $2}' <<< "$line")"
-    cmd="$(cut -d' ' -f3- <<< "$line")"
+    cmd="$(printf '%s\n' "$line" | cut -d' ' -f3-)"
 
-    # Never kill this supervisor or its direct parent shell.
     if [[ "$pid" == "$SELF_PID" || "$pid" == "$PPID" ]]; then
       echo "- KEEP pid=$pid reason=self-or-parent cmd=$cmd"
       continue
     fi
 
-    # Only manage processes related to target repo or BQA scripts.
     if [[ "$cmd" != *"$TARGET_REPO"* && "$cmd" != *"bqa_"* && "$cmd" != *"bqa-team"* ]]; then
       echo "- KEEP pid=$pid reason=not-target-repo cmd=$cmd"
       continue
@@ -90,27 +93,29 @@ old_pids=()
     fi
 
     echo "- OLD pid=$pid ppid=$ppid reason=$reason cmd=$cmd"
-    old_pids+=("$pid")
-  done
+    echo "$pid" >> "$PIDS_FILE"
+  done < "$CANDIDATES_FILE"
 } > "$REPORT"
 
 cat "$REPORT"
 
-if (( ${#old_pids[@]} > 0 )); then
+if [[ -s "$PIDS_FILE" ]]; then
   if [[ "$EXECUTE" -eq 1 ]]; then
-    echo "Stopping old BQA processes: ${old_pids[*]}"
-    for pid in "${old_pids[@]}"; do
+    echo "Stopping old BQA processes: $(tr '\n' ' ' < "$PIDS_FILE")"
+    while IFS= read -r pid; do
+      [[ -z "$pid" ]] && continue
       kill -TERM "$pid" 2>/dev/null || true
-    done
+    done < "$PIDS_FILE"
     sleep 3
-    for pid in "${old_pids[@]}"; do
+    while IFS= read -r pid; do
+      [[ -z "$pid" ]] && continue
       if kill -0 "$pid" 2>/dev/null; then
         echo "Force stopping pid=$pid"
         kill -KILL "$pid" 2>/dev/null || true
       fi
-    done
+    done < "$PIDS_FILE"
   else
-    echo "Dry run: would stop old BQA processes: ${old_pids[*]}"
+    echo "Dry run: would stop old BQA processes: $(tr '\n' ' ' < "$PIDS_FILE")"
   fi
 else
   echo "No old BQA processes to stop."
