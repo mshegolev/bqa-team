@@ -7,6 +7,7 @@ LOG_DIR="$ROOT/.bqa-team/logs"
 PROMPT_DIR="$ROOT/.bqa-team/prompts"
 PACK_DIR="$ROOT/.bqa/output/etl-agent-pack"
 VALIDATOR="$ROOT/scripts/bqa_validate_etl_pack.sh"
+GUARD="$ROOT/scripts/bqa_agent_guard.sh"
 
 mkdir -p "$LOG_DIR" "$PROMPT_DIR" "$ROOT/.bqa/output"
 
@@ -14,6 +15,19 @@ if [[ ! -x "$VALIDATOR" ]]; then
   echo "ERROR: validator not found or not executable: $VALIDATOR" >&2
   exit 2
 fi
+
+run_guard() {
+  if [[ -x "$GUARD" ]]; then
+    set +e
+    BQA_TARGET_GOAL="ETL QA Pack under .bqa/output/etl-agent-pack" bash "$GUARD" "$ROOT"
+    code=$?
+    set -e
+    if [[ "$code" -eq 2 ]]; then
+      echo "Agent guard requested STOP. Context saved under .bqa-team/safety/." >&2
+      exit 2
+    fi
+  fi
+}
 
 build_prompt="$PROMPT_DIR/build_etl_qa_agent_pack.md"
 heal_prompt="$PROMPT_DIR/selfheal_etl_qa_agent_pack.md"
@@ -51,17 +65,24 @@ Use markdown and JSON artifacts. Use clearly marked synthetic examples when real
 PROMPT
 fi
 
+run_guard || true
+
 attempt=1
 while (( attempt <= MAX_ATTEMPTS )); do
   echo "=== BQA ETL selfheal attempt $attempt/$MAX_ATTEMPTS ==="
+
+  run_guard || true
 
   if [[ $attempt -eq 1 && ! -d "$PACK_DIR" ]]; then
     codex exec "$(cat "$build_prompt")" 2>&1 | tee "$LOG_DIR/etl-pack-build-attempt-$attempt.log" || true
   fi
 
+  run_guard || true
+
   if bash "$VALIDATOR" "$ROOT"; then
     echo "ETL pack validation passed."
     zip -r "$ROOT/.bqa/output/etl-agent-pack.zip" "$PACK_DIR" >/dev/null 2>&1 || true
+    run_guard || true
     exit 0
   fi
 
@@ -95,4 +116,5 @@ done
 
 echo "ETL pack selfheal failed after $MAX_ATTEMPTS attempts." >&2
 bash "$VALIDATOR" "$ROOT" || true
+run_guard || true
 exit 1
