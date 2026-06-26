@@ -18,7 +18,8 @@ for script in \
   bqa_validate_etl_pack.sh \
   bqa_selfheal_etl_pack.sh \
   bqa_agent_guard.sh \
-  bqa_team_evolve.sh
+  bqa_team_evolve.sh \
+  bqa_consent.sh
   do
     cp "$SOURCE_DIR/scripts/$script" "$TARGET_DIR/scripts/$script"
     chmod +x "$TARGET_DIR/scripts/$script"
@@ -37,3 +38,4 @@ echo "Self-heal: scripts/bqa_selfheal_etl_pack.sh"
 echo "Validate: scripts/bqa_validate_etl_pack.sh"
 echo "Guard: scripts/bqa_agent_guard.sh"
 echo "Evolve: scripts/bqa_team_evolve.sh --execute"
+echo "Consent: scripts/bqa_consent.sh"
