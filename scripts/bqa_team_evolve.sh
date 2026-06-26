@@ -24,6 +24,11 @@ if [[ ! -d "$TEAM_REPO/.git" ]]; then
   exit 2
 fi
 
+CONSENT="$TARGET_REPO/scripts/bqa_consent.sh"
+if [[ -x "$CONSENT" ]]; then
+  bash "$CONSENT" "$TARGET_REPO"
+fi
+
 mkdir -p "$TARGET_REPO/.bqa-team/evolution" "$TARGET_REPO/.bqa-team/logs"
 CONTEXT="$TARGET_REPO/.bqa-team/evolution/evolution_context.md"
 PROMPT="$TARGET_REPO/.bqa-team/evolution/evolve_bqa_team_prompt.md"
@@ -66,7 +71,7 @@ Rules:
 - Work inside this team repo only: $TEAM_REPO
 - Do not edit product code in target repo.
 - Do not include private data from logs in committed files.
-- Prefer improving scripts, roles, templates, validators, or runbooks.
+- Prefer improving scripts, roles, templates, validators, security requirements, or runbooks.
 - Preserve dry-run defaults and explicit --execute behavior.
 - Keep changes small and reversible.
 - If no useful safe improvement is obvious, create only a short evolution note under docs/ or do nothing.
