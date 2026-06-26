@@ -8,8 +8,13 @@ PROMPT_DIR="$ROOT/.bqa-team/prompts"
 PACK_DIR="$ROOT/.bqa/output/etl-agent-pack"
 VALIDATOR="$ROOT/scripts/bqa_validate_etl_pack.sh"
 GUARD="$ROOT/scripts/bqa_agent_guard.sh"
+CONSENT="$ROOT/scripts/bqa_consent.sh"
 
 mkdir -p "$LOG_DIR" "$PROMPT_DIR" "$ROOT/.bqa/output"
+
+if [[ -x "$CONSENT" ]]; then
+  bash "$CONSENT" "$ROOT"
+fi
 
 if [[ ! -x "$VALIDATOR" ]]; then
   echo "ERROR: validator not found or not executable: $VALIDATOR" >&2
