@@ -20,7 +20,8 @@ for script in \
   bqa_agent_guard.sh \
   bqa_team_evolve.sh \
   bqa_consent.sh \
-  bqa_process_supervisor.sh
+  bqa_process_supervisor.sh \
+  bqa_devsecops_scan.sh
   do
     cp "$SOURCE_DIR/scripts/$script" "$TARGET_DIR/scripts/$script"
     chmod +x "$TARGET_DIR/scripts/$script"
@@ -41,3 +42,4 @@ echo "Guard: scripts/bqa_agent_guard.sh"
 echo "Evolve: scripts/bqa_team_evolve.sh --execute"
 echo "Consent: scripts/bqa_consent.sh"
 echo "Supervisor: scripts/bqa_process_supervisor.sh --execute --restart"
+echo "DevSecOps: scripts/bqa_devsecops_scan.sh"
