@@ -16,7 +16,9 @@ for script in \
   bqa_team_orchestrator.py \
   bqa_question.sh \
   bqa_validate_etl_pack.sh \
-  bqa_selfheal_etl_pack.sh
+  bqa_selfheal_etl_pack.sh \
+  bqa_agent_guard.sh \
+  bqa_team_evolve.sh
   do
     cp "$SOURCE_DIR/scripts/$script" "$TARGET_DIR/scripts/$script"
     chmod +x "$TARGET_DIR/scripts/$script"
@@ -31,5 +33,7 @@ if ! find "$TARGET_DIR/.bqa-team/backlog" -type f -name '*.md' | grep -q .; then
 fi
 
 echo "BQA Team installed into: $TARGET_DIR"
-echo "Next: scripts/bqa_selfheal_etl_pack.sh"
+echo "Self-heal: scripts/bqa_selfheal_etl_pack.sh"
 echo "Validate: scripts/bqa_validate_etl_pack.sh"
+echo "Guard: scripts/bqa_agent_guard.sh"
+echo "Evolve: scripts/bqa_team_evolve.sh --execute"
