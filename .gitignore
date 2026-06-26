@@ -1,0 +1,11 @@
+# Local runtime artifacts
+.bqa/
+.bqa-team/generated/
+.bqa-team/logs/
+.bqa-team/state.json
+error.log
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
