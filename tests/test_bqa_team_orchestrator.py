@@ -248,6 +248,10 @@ class AutopilotTests(unittest.TestCase):
                 "mshegolev/bqa-os",
                 "--remove-label",
                 "bqa:ready-qa",
+                "--remove-label",
+                "bqa:qa-failed",
+                "--remove-label",
+                "bqa:blocked",
                 "--add-label",
                 "bqa:ready-business",
             ),
@@ -384,6 +388,7 @@ class AutopilotTests(unittest.TestCase):
     def test_autopilot_cycle_stops_before_business_acceptance_when_qa_fails(self):
         orchestrator = load_orchestrator()
         events = []
+        label_events = []
 
         with tempfile.TemporaryDirectory() as tmp:
             orchestrator.RUNS_DIR = Path(tmp) / "runs"
@@ -401,6 +406,9 @@ class AutopilotTests(unittest.TestCase):
 
             orchestrator.cmd_qa = fake_qa
             orchestrator.cmd_business_accept = lambda args: events.append(("business", args.pr))
+            orchestrator.edit_issue_labels = lambda repo, issue, *, execute, remove=None, add=None: label_events.append(
+                (repo, issue, tuple(remove or []), tuple(add or []))
+            )
             orchestrator.run = lambda cmd, *, execute, capture=False, check=True: subprocess.CompletedProcess(
                 cmd, 0, stdout="", stderr=""
             )
@@ -423,6 +431,10 @@ class AutopilotTests(unittest.TestCase):
         self.assertIn(("dev", 7), events)
         self.assertIn(("qa", 12), events)
         self.assertNotIn(("business", 12), events)
+        self.assertIn(
+            ("mshegolev/bqa-os", 7, ("bqa:ready-qa",), ("bqa:qa-failed", "bqa:blocked")),
+            label_events,
+        )
 
     def test_autopilot_routes_issue_to_subagent_before_development(self):
         orchestrator = load_orchestrator()
