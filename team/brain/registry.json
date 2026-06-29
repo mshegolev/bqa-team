@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "kind": "BQATeamUnifiedRegistry",
+  "metadata": {
+    "name": "bqa-team-unified",
+    "description": "Unified BQA Team agents, skills, workflows, guardrails, memory indexes, and project profiles for BQA Brain.",
+    "source_registry": "team/brain/registry.json"
+  },
+  "artifacts": [
+    {
+      "id": "bqa-os-tech-lead-architect",
+      "type": "agent",
+      "title": "BQA-OS Tech Lead Architect",
+      "source": "team/roles/BQA_OS_Tech_Lead_Architect.md",
+      "destination": "agents/bqa-os-tech-lead-architect.md",
+      "summary": "Architecture role for turning business tasks into bounded implementation issues.",
+      "tags": ["architecture", "issue-design", "bqa-os"]
+    },
+    {
+      "id": "bqa-os-go-cli-implementer",
+      "type": "agent",
+      "title": "BQA-OS Go CLI Implementer",
+      "source": "team/roles/BQA_OS_Go_CLI_Implementer.md",
+      "destination": "agents/bqa-os-go-cli-implementer.md",
+      "summary": "Implementation role for focused Go CLI and runtime changes in bqa-os.",
+      "tags": ["go", "cli", "implementation"]
+    },
+    {
+      "id": "bqa-os-qa-test-engineer",
+      "type": "agent",
+      "title": "BQA-OS QA Test Engineer",
+      "source": "team/roles/BQA_OS_QA_Test_Engineer.md",
+      "destination": "agents/bqa-os-qa-test-engineer.md",
+      "summary": "QA role for validating PRs, acceptance criteria, and regression evidence.",
+      "tags": ["qa", "tests", "validation"]
+    },
+    {
+      "id": "agent-safety-drift-guard",
+      "type": "agent",
+      "title": "Agent Safety Drift Guard",
+      "source": "team/roles/Agent_Safety_Drift_Guard.md",
+      "destination": "agents/agent-safety-drift-guard.md",
+      "summary": "Safety role for stopping drift, unsupported assumptions, and broad diffs.",
+      "tags": ["safety", "drift", "guardrails"]
+    },
+    {
+      "id": "team-evolution-manager",
+      "type": "agent",
+      "title": "Team Evolution Manager",
+      "source": "team/roles/Team_Evolution_Manager.md",
+      "destination": "agents/team-evolution-manager.md",
+      "summary": "Evolution role for improving shared BQA Team prompts, scripts, and runbooks safely.",
+      "tags": ["evolution", "self-improvement", "run-feedback"]
+    },
+    {
+      "id": "qa-memory-pilot-skill",
+      "type": "skill",
+      "title": "QA Memory Pilot Skill",
+      "source": "team/brain/skills/qa-memory-pilot.md",
+      "destination": "skills/qa-memory-pilot.md",
+      "summary": "Unified skill for creating local QA memory packs from sanitized evidence.",
+      "tags": ["qa-memory", "pilot", "local-first"]
+    },
+    {
+      "id": "autopilot-operations-skill",
+      "type": "skill",
+      "title": "Autopilot Operations Skill",
+      "source": "team/brain/skills/autopilot-operations.md",
+      "destination": "skills/autopilot-operations.md",
+      "summary": "Unified skill for operating BQA Autopilot with status, auto-heal, and verification checks.",
+      "tags": ["autopilot", "operations", "status"]
+    },
+    {
+      "id": "testing-only-runner-skill",
+      "type": "skill",
+      "title": "Testing-Only Runner Skill",
+      "source": "team/brain/skills/testing-only-runner.md",
+      "destination": "skills/testing-only-runner.md",
+      "summary": "Unified skill for applying only the QA test engineer role to a target repository.",
+      "tags": ["testing-only", "qa", "target-repo"]
+    },
+    {
+      "id": "github-team-pipeline-workflow",
+      "type": "workflow",
+      "title": "GitHub Team Pipeline Workflow",
+      "source": "team/brain/workflows/github-team-pipeline.md",
+      "destination": "workflows/github-team-pipeline.md",
+      "summary": "Unified workflow for business task to architecture, issue, dev, QA, business acceptance, and merge.",
+      "tags": ["github", "pipeline", "team"]
+    },
+    {
+      "id": "etl-qa-memory-pack-workflow",
+      "type": "workflow",
+      "title": "ETL QA Memory Pack Workflow",
+      "source": "team/brain/workflows/etl-qa-memory-pack.md",
+      "destination": "workflows/etl-qa-memory-pack.md",
+      "summary": "Unified workflow for generating, validating, and self-healing ETL QA memory packs.",
+      "tags": ["etl", "qa", "memory-pack"]
+    },
+    {
+      "id": "bqa-brain-sync-workflow",
+      "type": "workflow",
+      "title": "BQA Brain Sync Workflow",
+      "source": "team/brain/workflows/bqa-brain-sync.md",
+      "destination": "workflows/bqa-brain-sync.md",
+      "summary": "Unified workflow for exporting BQA Team artifacts into BQA Brain and syncing with sanitize.",
+      "tags": ["brain", "sync", "registry"]
+    },
+    {
+      "id": "local-first-security-guardrail",
+      "type": "guardrail",
+      "title": "Local-First Security Guardrail",
+      "source": "team/brain/guardrails/local-first-security.md",
+      "destination": "guardrails/local-first-security.md",
+      "summary": "Unified guardrail for local-first execution and public-safe committed artifacts.",
+      "tags": ["security", "local-first", "privacy"]
+    },
+    {
+      "id": "consent-drift-validation-guardrail",
+      "type": "guardrail",
+      "title": "Consent, Drift, and Validation Guardrail",
+      "source": "team/brain/guardrails/consent-drift-validation.md",
+      "destination": "guardrails/consent-drift-validation.md",
+      "summary": "Unified guardrail for consent gates, drift reports, and validation before success claims.",
+      "tags": ["consent", "drift", "validation"]
+    },
+    {
+      "id": "bqa-os-project-profile",
+      "type": "project_profile",
+      "title": "BQA-OS Project Profile",
+      "source": "team/brain/project-profiles/bqa-os.md",
+      "destination": "project-profiles/bqa-os.md",
+      "summary": "Unified memory profile for bqa-os capabilities, commands, and integration points.",
+      "tags": ["bqa-os", "project-profile", "memory"]
+    },
+    {
+      "id": "bqa-team-capability-index",
+      "type": "memory_index",
+      "title": "BQA Team Capability Index",
+      "source": "team/brain/memory/bqa-team-capability-index.md",
+      "destination": "memory/bqa-team-capability-index.md",
+      "summary": "Unified index of BQA Team capabilities that should be preserved in git-backed brain memory.",
+      "tags": ["capabilities", "memory-index", "bqa-team"]
+    }
+  ]
+}

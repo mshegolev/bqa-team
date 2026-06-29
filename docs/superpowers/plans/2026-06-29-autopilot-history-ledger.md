@@ -16,7 +16,7 @@
 - Modify: `tests/test_bqa_team_orchestrator.py`
 - Modify: `scripts/bqa_team_orchestrator.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add `test_autopilot_history_records_processed_cycle_details`. It should:
 - redirect `STATUS_DIR`, `STATUS_JSON`, `STATUS_MD`, and `AUTOPILOT_HISTORY` into a temp directory
@@ -24,13 +24,13 @@ Add `test_autopilot_history_records_processed_cycle_details`. It should:
 - call `cmd_autopilot()` once
 - assert one JSONL entry exists with `status == "processed"`, `issue == 42`, `pr == 77`, and `processed_this_run == 1`
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python3 -m unittest tests.test_bqa_team_orchestrator.AutopilotTests.test_autopilot_history_records_processed_cycle_details -v`
 
 Expected: FAIL because `AUTOPILOT_HISTORY` and append logic do not exist.
 
-- [ ] **Step 3: Implement minimal ledger support**
+- [x] **Step 3: Implement minimal ledger support**
 
 Add:
 - `AUTOPILOT_HISTORY = STATUS_DIR / "autopilot-history.jsonl"`
@@ -40,7 +40,7 @@ Add:
 
 Call `append_autopilot_history()` from `cmd_autopilot()` after each cycle.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run the same unittest command.
 
@@ -52,17 +52,17 @@ Expected: PASS.
 - Modify: `tests/test_bqa_team_orchestrator.py`
 - Modify: `scripts/bqa_team_orchestrator.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add `test_autopilot_cycle_records_missing_pr_stop_reason`. It should run the real `run_autopilot_cycle()` path with a selected issue but no PR found, then assert the last cycle details include `status == "blocked"` and `stop_reason == "missing_pr"`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python3 -m unittest tests.test_bqa_team_orchestrator.AutopilotTests.test_autopilot_cycle_records_missing_pr_stop_reason -v`
 
 Expected: FAIL because `run_autopilot_cycle()` does not yet set details.
 
-- [ ] **Step 3: Add details at each return path**
+- [x] **Step 3: Add details at each return path**
 
 Set cycle details for:
 - idle: `status="idle"`, `stop_reason="no_candidates"`
@@ -72,7 +72,7 @@ Set cycle details for:
 - business revision: `status="blocked"`, `stop_reason="business_revision"`
 - processed: `status="processed"`, `stop_reason="completed"`
 
-- [ ] **Step 4: Run focused suite**
+- [x] **Step 4: Run focused suite**
 
 Run: `python3 -m unittest tests.test_bqa_team_orchestrator -v`
 
@@ -83,11 +83,11 @@ Expected: PASS.
 **Files:**
 - Modify: `README.md`
 
-- [ ] **Step 1: Update README**
+- [x] **Step 1: Update README**
 
 Add `.bqa-team/status/autopilot-history.jsonl` to the monitor artifact list and document that it contains append-only cycle records.
 
-- [ ] **Step 2: Run full verification**
+- [x] **Step 2: Run full verification**
 
 Run: `make verify`
 

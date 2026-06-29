@@ -72,6 +72,24 @@ scripts/bqa_team_orchestrator.py
 .bqa-team/templates/
 ```
 
+## Export unified BQA Brain artifacts
+
+`bqa-team` keeps a unified registry of reusable agents, skills, workflows,
+guardrails, project profiles, and memory indexes in:
+
+```text
+team/brain/registry.json
+```
+
+Export those artifacts into a local `bqa-brain` cache:
+
+```bash
+scripts/bqa_brain_export.sh --brain-dir "$HOME/.bqa/brain"
+```
+
+For `bqa-os` setup and sync commands, see
+[`docs/BQA_BRAIN_INTEGRATION.md`](docs/BQA_BRAIN_INTEGRATION.md).
+
 ## Recommended `.gitignore` in target repos
 
 Keep role definitions and backlog if you want to version them, but ignore runtime output:

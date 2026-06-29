@@ -15,7 +15,7 @@
 **Files:**
 - Create: `tests/test_project_foundation.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Create tests that assert:
 - `Makefile` exposes `test`, `lint`, and `verify` targets.
@@ -23,7 +23,7 @@ Create tests that assert:
 - `docs/ROADMAP.md` references every current `team/backlog/*.md` item.
 - `.gitignore` excludes Python bytecode caches.
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run:
 
@@ -40,18 +40,18 @@ Expected before implementation: failures for missing `Makefile`, missing CI work
 - Modify: `.gitignore`
 - Create: `.github/workflows/ci.yml`
 
-- [ ] **Step 1: Add `Makefile` targets**
+- [x] **Step 1: Add `Makefile` targets**
 
 Add:
 - `test`: runs `python3 -m unittest discover -s tests -v`
 - `lint`: runs Python compile checks and `bash -n` for shell scripts
 - `verify`: runs `lint` then `test`
 
-- [ ] **Step 2: Add CI**
+- [x] **Step 2: Add CI**
 
 Add a GitHub Actions workflow for pushes and pull requests that checks out the repo, sets up Python 3, and runs `make verify`.
 
-- [ ] **Step 3: Ignore Python bytecode**
+- [x] **Step 3: Ignore Python bytecode**
 
 Add `__pycache__/` and `*.pyc` to `.gitignore`.
 
@@ -60,7 +60,7 @@ Add `__pycache__/` and `*.pyc` to `.gitignore`.
 **Files:**
 - Create: `docs/ROADMAP.md`
 
-- [ ] **Step 1: Map backlog into phases**
+- [x] **Step 1: Map backlog into phases**
 
 Create a short roadmap with:
 - Foundation and safety.
@@ -69,7 +69,7 @@ Create a short roadmap with:
 - Autopilot hardening.
 - Sales pilot package.
 
-- [ ] **Step 2: Reference source backlog files**
+- [x] **Step 2: Reference source backlog files**
 
 Each roadmap phase must link or name the relevant `team/backlog/*.md` file, so backlog and roadmap do not diverge silently.
 
@@ -78,19 +78,19 @@ Each roadmap phase must link or name the relevant `team/backlog/*.md` file, so b
 **Files:**
 - No new files.
 
-- [ ] **Step 1: Run targeted foundation tests**
+- [x] **Step 1: Run targeted foundation tests**
 
 ```bash
 python3 -m unittest tests.test_project_foundation -v
 ```
 
-- [ ] **Step 2: Run full verification**
+- [x] **Step 2: Run full verification**
 
 ```bash
 make verify
 ```
 
-- [ ] **Step 3: Check workspace**
+- [x] **Step 3: Check workspace**
 
 ```bash
 git status --short
