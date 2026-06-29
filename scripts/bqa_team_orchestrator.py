@@ -782,8 +782,9 @@ def run_output_contains(path: Path, marker: str) -> bool:
 def run_output_has_status(path: Path, key: str, value: str) -> bool:
     if not path.exists():
         return False
+    content = re.sub(r"(?ms)^```[^\n]*\n.*?^```", "", read(path))
     pattern = re.compile(rf"^\s*{re.escape(key)}\s*:\s*{re.escape(value)}\b", re.MULTILINE)
-    return bool(pattern.search(read(path)))
+    return bool(pattern.search(content))
 
 
 def find_pr_for_branch(repo: str, branch: str, execute: bool) -> int | None:

@@ -485,6 +485,23 @@ REASON: Replaced by the install smoke test issue.
 
             self.assertFalse(orchestrator.run_output_has_status(output, "QUESTION_STATUS", "OPEN"))
 
+    def test_run_output_has_status_ignores_fenced_prompt_contract(self):
+        orchestrator = load_orchestrator()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "dev_issue.out.txt"
+            output.write_text(
+                "Prompt instructions:\n"
+                "```text\n"
+                "QUESTION_STATUS: OPEN\n"
+                "QUESTION_TYPE: architecture | product | qa | implementation\n"
+                "BLOCKS_ISSUE: <issue number>\n"
+                "```\n"
+                "Implementation completed without questions.\n"
+            )
+
+            self.assertFalse(orchestrator.run_output_has_status(output, "QUESTION_STATUS", "OPEN"))
+
     def test_run_output_has_status_detects_explicit_status_line(self):
         orchestrator = load_orchestrator()
 
