@@ -551,8 +551,9 @@ def cmd_dev(args: argparse.Namespace) -> None:
     result = run(["codex", "exec", prompt], execute=args.execute, capture=args.execute, check=False)
     if args.execute:
         out = result.stdout + "\n" + result.stderr
-        write(RUNS_DIR / f"dev_issue_{args.issue}.out.txt", out)
-        if re.search(r"^\s*QUESTION_STATUS\s*:\s*OPEN\b", out, re.MULTILINE):
+        output_path = RUNS_DIR / f"dev_issue_{args.issue}.out.txt"
+        write(output_path, out)
+        if run_output_has_status(output_path, "QUESTION_STATUS", "OPEN"):
             run(["gh", "issue", "edit", str(args.issue), "--repo", args.repo, "--add-label", "bqa:blocked"], execute=True, check=False)
             log("Developer raised an open question. See run output before continuing.")
             return
