@@ -3,6 +3,7 @@
 .serena/
 .bqa-team/generated/
 .bqa-team/logs/
+.bqa-team/status/
 .bqa-team/state.json
 error.log
 
