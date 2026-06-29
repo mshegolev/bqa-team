@@ -224,6 +224,21 @@ The wrapper uses `nohup`, writes `.bqa-team/status/autopilot.pid`, and keeps run
 
 The status view shows open, ready, doing, blocked, and completed counts.
 
+Generate a visual issue view:
+
+```bash
+../bqa-team/scripts/bqa_autopilot.sh view
+```
+
+This writes:
+
+```text
+.bqa-team/status/project-view.html
+.bqa-team/status/project-view.json
+```
+
+The HTML view shows summary counts, a Gantt-like status timeline, issue detail cards, and dependency links parsed from explicit phrases such as `Depends on #12`, `blocked by #12`, `requires #12`, or `BQA_DEPENDS_ON: #12,#14` in issue bodies.
+
 Before each issue is executed, autopilot asks the router to choose exactly one subagent from the role catalog, for example `go-cli-implementer`, `senior-go-ai-engineer`, `designer-frontend`, `devsecops-guard`, or `qa-test-engineer`. The routing decision is saved in:
 
 ```text

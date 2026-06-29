@@ -99,6 +99,12 @@ case "$ACTION" in
     tail -f "$LOG_FILE"
     ;;
 
+  view)
+    cd "$TARGET_REPO"
+    python3 "$ORCH" --repo "$REPO" --execute view
+    echo "Open: $TARGET_REPO/.bqa-team/status/project-view.html"
+    ;;
+
   stop)
     if is_running; then
       kill -TERM "$(cat "$PID_FILE")"
@@ -110,7 +116,7 @@ case "$ACTION" in
     ;;
 
   *)
-    echo "Usage: $0 {configure|start|status|logs|stop} [--target-repo PATH] [--team-repo PATH] [--repo OWNER/REPO] [--config PATH]" >&2
+    echo "Usage: $0 {configure|start|status|logs|view|stop} [--target-repo PATH] [--team-repo PATH] [--repo OWNER/REPO] [--config PATH]" >&2
     exit 2
     ;;
 esac

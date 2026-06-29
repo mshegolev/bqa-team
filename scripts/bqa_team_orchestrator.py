@@ -35,6 +35,8 @@ TMP_DIR = GENERATED_DIR / "tmp"
 STATUS_DIR = TEAM_DIR / "status"
 STATUS_JSON = STATUS_DIR / "autopilot-status.json"
 STATUS_MD = STATUS_DIR / "autopilot-status.md"
+PROJECT_VIEW_JSON = STATUS_DIR / "project-view.json"
+PROJECT_VIEW_HTML = STATUS_DIR / "project-view.html"
 AUTOPILOT_CONFIG = TEAM_DIR / "autopilot-config.json"
 STATE_FILE = TEAM_DIR / "state.json"
 
@@ -869,6 +871,251 @@ Processed this run: {snapshot.get('processed_this_run', 0)}
 """
 
 
+def issue_project_snapshot(repo: str, execute: bool, limit: int = 100) -> str:
+    if not execute:
+        return "[]"
+    result = run([
+        "gh", "issue", "list",
+        "--repo", repo,
+        "--state", "all",
+        "--limit", str(limit),
+        "--json", "number,title,body,labels,state,url,createdAt,updatedAt,closedAt",
+        "--jq", ".",
+    ], execute=True, capture=True, check=False)
+    if result.returncode != 0:
+        raise SystemExit(f"Failed to fetch GitHub issues for project view: {result.stderr.strip()}")
+    return result.stdout
+
+
+def label_names(issue: dict) -> list[str]:
+    labels = issue.get("labels") or []
+    names = []
+    for label in labels:
+        if isinstance(label, dict) and label.get("name"):
+            names.append(label["name"])
+        elif isinstance(label, str):
+            names.append(label)
+    return names
+
+
+def issue_status(issue: dict) -> str:
+    labels = set(label_names(issue))
+    if "bqa:blocked" in labels:
+        return "blocked"
+    if issue.get("state", "").upper() == "CLOSED" or "bqa:done" in labels:
+        return "done"
+    if "bqa:ready-business" in labels:
+        return "ready-business"
+    if "bqa:ready-qa" in labels:
+        return "ready-qa"
+    if "bqa:in-dev" in labels:
+        return "in-dev"
+    if "bqa:ready-dev" in labels:
+        return "ready-dev"
+    return "open"
+
+
+def parse_issue_dependencies(text: str) -> list[int]:
+    deps = set()
+    patterns = [
+        r"(?:depends on|depend on|blocked by|requires|required by|after)\s+#(\d+)",
+        r"BQA_DEPENDS_ON:\s*([#\d,\s]+)",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, text or "", re.I):
+            if match.lastindex == 1:
+                for number in re.findall(r"#?(\d+)", match.group(1)):
+                    deps.add(int(number))
+    return sorted(deps)
+
+
+def project_view_model(repo: str, execute: bool, limit: int = 100) -> dict:
+    raw = issue_project_snapshot(repo, execute, limit)
+    try:
+        source_issues = json.loads(raw)
+    except json.JSONDecodeError:
+        source_issues = []
+
+    issues = []
+    edges = []
+    counts = {"open": 0, "ready-dev": 0, "in-dev": 0, "ready-qa": 0, "ready-business": 0, "blocked": 0, "done": 0}
+
+    for item in source_issues:
+        status = issue_status(item)
+        deps = parse_issue_dependencies(item.get("body") or "")
+        issue = {
+            "number": item.get("number"),
+            "title": item.get("title") or "",
+            "url": item.get("url") or "",
+            "status": status,
+            "labels": label_names(item),
+            "deps": deps,
+            "created_at": item.get("createdAt"),
+            "updated_at": item.get("updatedAt"),
+            "closed_at": item.get("closedAt"),
+        }
+        issues.append(issue)
+        counts[status] = counts.get(status, 0) + 1
+        for dep in deps:
+            edges.append({"from": dep, "to": issue["number"]})
+
+    return {"repo": repo, "updated_at": now(), "counts": counts, "issues": issues, "edges": edges}
+
+
+def html_escape(text: object) -> str:
+    return (
+        str(text if text is not None else "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def render_project_view_html(model: dict) -> str:
+    statuses = ["open", "ready-dev", "in-dev", "ready-qa", "ready-business", "blocked", "done"]
+    status_columns = "".join(f"<th>{html_escape(status)}</th>" for status in statuses)
+    count_cards = "".join(
+        f"<div class=\"metric\"><span>{html_escape(status)}</span><strong>{model['counts'].get(status, 0)}</strong></div>"
+        for status in statuses
+    )
+    rows = []
+    for issue in model["issues"]:
+        cells = []
+        for status in statuses:
+            active = status == issue["status"]
+            cell = ""
+            if active:
+                deps = ", ".join(f"#{dep}" for dep in issue["deps"]) or "none"
+                labels = ", ".join(issue["labels"][:4])
+                cell = (
+                    f"<a class=\"bar {html_escape(status)}\" href=\"{html_escape(issue['url'])}\">"
+                    f"<span>#{html_escape(issue['number'])}</span>"
+                    f"<b>{html_escape(issue['title'])}</b>"
+                    f"<em>deps: {html_escape(deps)}</em>"
+                    f"<small>{html_escape(labels)}</small>"
+                    "</a>"
+                )
+            cells.append(f"<td>{cell}</td>")
+        rows.append(
+            "<tr>"
+            f"<th><a href=\"{html_escape(issue['url'])}\">#{html_escape(issue['number'])}</a></th>"
+            + "".join(cells)
+            + "</tr>"
+        )
+
+    edges = "".join(
+        f"<li aria-label=\"#{edge['from']} -> #{edge['to']}\"><a href=\"#issue-{edge['from']}\">#{edge['from']}</a> -&gt; <a href=\"#issue-{edge['to']}\">#{edge['to']}</a></li>"
+        for edge in model["edges"]
+    ) or "<li>No explicit dependencies found. Use phrases like `Depends on #12` or `blocked by #12` in issue bodies.</li>"
+
+    issue_cards = "".join(
+        f"<article id=\"issue-{html_escape(issue['number'])}\" class=\"issue-card {html_escape(issue['status'])}\">"
+        f"<div><a href=\"{html_escape(issue['url'])}\">#{html_escape(issue['number'])}</a> "
+        f"<strong>{html_escape(issue['title'])}</strong></div>"
+        f"<p>Status: {html_escape(issue['status'])}</p>"
+        f"<p>Depends on: {html_escape(', '.join('#' + str(dep) for dep in issue['deps']) or 'none')}</p>"
+        "</article>"
+        for issue in model["issues"]
+    )
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BQA Project View</title>
+  <style>
+    :root {{
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --ink: #18202f;
+      --muted: #667085;
+      --line: #d9deea;
+      --accent: #276ef1;
+      --ready: #dbeafe;
+      --work: #e0f2fe;
+      --qa: #fef3c7;
+      --biz: #ede9fe;
+      --blocked: #fee2e2;
+      --done: #dcfce7;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }}
+    header {{ padding: 24px 28px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }}
+    h1 {{ margin: 0 0 8px; font-size: 28px; line-height: 1.15; }}
+    header p {{ margin: 0; color: var(--muted); }}
+    main {{ padding: 20px 28px 36px; display: grid; gap: 18px; }}
+    .metrics {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }}
+    .metric {{ background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }}
+    .metric span {{ display: block; color: var(--muted); font-size: 12px; text-transform: uppercase; }}
+    .metric strong {{ font-size: 28px; }}
+    .panel {{ background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }}
+    .panel h2 {{ margin: 0; padding: 14px 16px; border-bottom: 1px solid var(--line); font-size: 16px; }}
+    .timeline-wrap {{ overflow-x: auto; }}
+    table {{ width: 100%; border-collapse: collapse; min-width: 980px; }}
+    th, td {{ border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); padding: 8px; vertical-align: top; }}
+    th {{ background: #f2f4f8; font-size: 12px; text-align: left; color: var(--muted); }}
+    td {{ height: 86px; min-width: 130px; }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    .bar {{ display: grid; gap: 3px; min-height: 68px; padding: 8px; border-radius: 7px; color: var(--ink); border: 1px solid rgba(24,32,47,.1); }}
+    .bar span, .bar em, .bar small {{ color: var(--muted); font-size: 11px; font-style: normal; }}
+    .bar b {{ font-size: 13px; line-height: 1.25; }}
+    .bar.open {{ background: #eef2ff; }}
+    .bar.ready-dev {{ background: var(--ready); }}
+    .bar.in-dev {{ background: var(--work); }}
+    .bar.ready-qa {{ background: var(--qa); }}
+    .bar.ready-business {{ background: var(--biz); }}
+    .bar.blocked {{ background: var(--blocked); }}
+    .bar.done {{ background: var(--done); }}
+    .deps {{ padding: 12px 18px 18px; columns: 2; }}
+    .deps li {{ break-inside: avoid; margin: 0 0 8px; }}
+    .cards {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; padding: 14px; }}
+    .issue-card {{ border: 1px solid var(--line); border-left: 5px solid var(--accent); border-radius: 8px; padding: 10px; background: #fff; }}
+    .issue-card p {{ margin: 6px 0 0; color: var(--muted); font-size: 13px; }}
+    @media (max-width: 720px) {{
+      header, main {{ padding-left: 14px; padding-right: 14px; }}
+      .deps {{ columns: 1; }}
+    }}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>BQA Project View</h1>
+    <p>{html_escape(model['repo'])} · updated {html_escape(model['updated_at'])}</p>
+  </header>
+  <main>
+    <section class="metrics">{count_cards}</section>
+    <section class="panel">
+      <h2>Gantt-like Status Timeline</h2>
+      <div class="timeline-wrap">
+        <table>
+          <thead><tr><th>Issue</th>{status_columns}</tr></thead>
+          <tbody>{''.join(rows)}</tbody>
+        </table>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Dependencies</h2>
+      <ul class="deps">{edges}</ul>
+    </section>
+    <section class="panel">
+      <h2>Issue Details</h2>
+      <div class="cards">{issue_cards}</div>
+    </section>
+  </main>
+</body>
+</html>
+"""
+
+
+def cmd_view(args: argparse.Namespace) -> None:
+    model = project_view_model(args.repo, args.execute, args.issue_limit)
+    write(PROJECT_VIEW_JSON, json.dumps(model, indent=2, ensure_ascii=False) + "\n")
+    write(PROJECT_VIEW_HTML, render_project_view_html(model))
+    print(f"Project view: {PROJECT_VIEW_HTML}")
+
+
 def write_monitor_status(repo: str, execute: bool, last_cycle_status: str = "unknown", processed_this_run: int = 0) -> dict:
     snapshot = monitor_snapshot(repo, execute)
     snapshot["last_cycle_status"] = last_cycle_status
@@ -1115,6 +1362,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("seed")
     sub.add_parser("ensure-labels")
     sub.add_parser("monitor")
+    view = sub.add_parser("view")
+    view.add_argument("--issue-limit", type=int, default=100)
 
     configure = sub.add_parser("configure-autopilot")
     configure.add_argument("--config", default=str(AUTOPILOT_CONFIG))
@@ -1184,6 +1433,7 @@ def main() -> None:
         "seed": cmd_seed,
         "ensure-labels": cmd_ensure_labels,
         "monitor": cmd_monitor,
+        "view": cmd_view,
         "configure-autopilot": cmd_configure_autopilot,
         "architect": cmd_architect,
         "create-issues": cmd_create_issues,

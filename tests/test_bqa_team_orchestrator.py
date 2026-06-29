@@ -319,6 +319,90 @@ REASON: Replaced by the install smoke test issue.
             self.assertTrue(orchestrator.STATUS_MD.exists())
             self.assertIn("Completed done: 3", orchestrator.STATUS_MD.read_text())
 
+    def test_parse_issue_dependencies_from_explicit_references(self):
+        orchestrator = load_orchestrator()
+
+        deps = orchestrator.parse_issue_dependencies(
+            "Depends on #12 and blocked by #17. Related to #99 but not a dependency."
+        )
+
+        self.assertEqual(deps, [12, 17])
+
+    def test_project_view_model_extracts_statuses_and_dependencies(self):
+        orchestrator = load_orchestrator()
+
+        payload = [
+            {
+                "number": 2,
+                "title": "Build CLI",
+                "body": "Depends on #1",
+                "state": "OPEN",
+                "url": "https://example.test/2",
+                "labels": [{"name": "bqa:in-dev"}],
+                "createdAt": "2026-06-01T00:00:00Z",
+                "updatedAt": "2026-06-02T00:00:00Z",
+                "closedAt": None,
+            },
+            {
+                "number": 1,
+                "title": "Define core",
+                "body": "",
+                "state": "CLOSED",
+                "url": "https://example.test/1",
+                "labels": [{"name": "bqa:done"}],
+                "createdAt": "2026-05-30T00:00:00Z",
+                "updatedAt": "2026-06-01T00:00:00Z",
+                "closedAt": "2026-06-01T00:00:00Z",
+            },
+        ]
+
+        orchestrator.issue_project_snapshot = lambda repo, execute, limit=100: json.dumps(payload)
+
+        view = orchestrator.project_view_model("mshegolev/bqa-os", True, 100)
+
+        self.assertEqual(view["counts"]["in-dev"], 1)
+        self.assertEqual(view["counts"]["done"], 1)
+        self.assertEqual(view["edges"], [{"from": 1, "to": 2}])
+
+    def test_issue_project_snapshot_fails_loudly_when_gh_fails(self):
+        orchestrator = load_orchestrator()
+        orchestrator.run = lambda cmd, *, execute, capture=False, check=True: subprocess.CompletedProcess(
+            cmd, 1, stdout="", stderr="network unavailable"
+        )
+
+        with self.assertRaises(SystemExit) as err:
+            orchestrator.issue_project_snapshot("mshegolev/bqa-os", True, 100)
+
+        self.assertIn("network unavailable", str(err.exception))
+
+    def test_render_project_view_html_contains_gantt_and_dependency_data(self):
+        orchestrator = load_orchestrator()
+
+        html = orchestrator.render_project_view_html(
+            {
+                "repo": "mshegolev/bqa-os",
+                "updated_at": "2026-06-29T00:00:00+00:00",
+                "counts": {"ready-dev": 1, "in-dev": 1, "ready-qa": 0, "ready-business": 0, "blocked": 0, "done": 0},
+                "issues": [
+                    {
+                        "number": 2,
+                        "title": "Build CLI",
+                        "url": "https://example.test/2",
+                        "status": "in-dev",
+                        "labels": ["bqa:in-dev"],
+                        "deps": [1],
+                        "created_at": "2026-06-01T00:00:00Z",
+                        "updated_at": "2026-06-02T00:00:00Z",
+                    }
+                ],
+                "edges": [{"from": 1, "to": 2}],
+            }
+        )
+
+        self.assertIn("BQA Project View", html)
+        self.assertIn("Build CLI", html)
+        self.assertIn("#1 -> #2", html)
+
     def test_write_default_autopilot_config_creates_reusable_config(self):
         orchestrator = load_orchestrator()
 
