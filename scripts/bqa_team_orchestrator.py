@@ -511,7 +511,7 @@ def cmd_dev(args: argparse.Namespace) -> None:
     prompt = dev_prompt(raw, args.repo, subagent)
     write(PROMPTS_DIR / f"dev_issue_{args.issue}.md", prompt)
 
-    run(["git", "checkout", "-b", branch], execute=args.execute, check=False)
+    checkout_issue_branch(branch, args.execute)
     run(["gh", "issue", "edit", str(args.issue), "--repo", args.repo, "--remove-label", "bqa:ready-dev", "--add-label", "bqa:in-dev"], execute=args.execute, check=False)
     result = run(["codex", "exec", prompt], execute=args.execute, capture=args.execute, check=False)
     if args.execute:
@@ -1223,6 +1223,14 @@ def sync_base_branch(args: argparse.Namespace) -> None:
     run(["git", "pull", "--ff-only"], execute=args.execute, check=False)
 
 
+def checkout_issue_branch(branch: str, execute: bool) -> None:
+    exists = run(["git", "rev-parse", "--verify", branch], execute=execute, capture=True, check=False)
+    cmd = ["git", "checkout", branch] if exists.returncode == 0 else ["git", "checkout", "-b", branch]
+    result = run(cmd, execute=execute, capture=True, check=False)
+    if execute and result.returncode != 0:
+        raise SystemExit(f"Failed to checkout issue branch {branch}: {result.stderr.strip()}")
+
+
 def list_ready_issues(repo: str, execute: bool, label: str | None = "bqa:ready-dev") -> list[int]:
     if not execute:
         return []
@@ -1239,9 +1247,60 @@ def list_ready_issues(repo: str, execute: bool, label: str | None = "bqa:ready-d
     return nums
 
 
+def open_issue_snapshot(repo: str, execute: bool, label: str | None = None) -> str:
+    if not execute:
+        return "[]"
+    cmd = [
+        "gh", "issue", "list",
+        "--repo", repo,
+        "--state", "open",
+        "--limit", "1000",
+        "--json", "number,body,labels,state",
+        "--jq", ".",
+    ]
+    if label:
+        cmd += ["--label", label]
+    result = run(cmd, execute=True, capture=True, check=False)
+    return result.stdout
+
+
+def list_candidate_issues(repo: str, execute: bool, label: str | None = "bqa:ready-dev") -> list[int]:
+    if label:
+        return list_ready_issues(repo, execute, label)
+    raw = open_issue_snapshot(repo, execute, None)
+    try:
+        issues = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+
+    issue_by_number = {issue.get("number"): issue for issue in issues}
+    excluded_labels = {
+        "bqa:blocked",
+        "bqa:in-dev",
+        "bqa:ready-qa",
+        "bqa:ready-business",
+        "bqa:done",
+        "bqa:business-approved",
+    }
+    candidates = []
+    for issue in issues:
+        labels = set(label_names(issue))
+        if labels & excluded_labels:
+            continue
+        blocked_dependency = False
+        for dep in parse_issue_dependencies(issue.get("body") or ""):
+            dep_issue = issue_by_number.get(dep)
+            if dep_issue and issue_status(dep_issue) == "blocked":
+                blocked_dependency = True
+                break
+        if not blocked_dependency and issue.get("number") is not None:
+            candidates.append(int(issue["number"]))
+    return candidates
+
+
 def run_autopilot_cycle(args: argparse.Namespace) -> str:
     issue_label = None if getattr(args, "all_open", False) else args.issue_label
-    ready = list_ready_issues(args.repo, args.execute, issue_label)
+    ready = list_candidate_issues(args.repo, args.execute, issue_label)
     if not ready:
         if issue_label:
             log(f"No open issues with label {issue_label}.")

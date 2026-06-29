@@ -262,6 +262,40 @@ REASON: Replaced by the install smoke test issue.
         self.assertEqual(issues, [3, 4])
         self.assertNotIn("--label", calls[0])
 
+    def test_candidate_issues_skip_blocked_non_dev_and_blocked_dependencies(self):
+        orchestrator = load_orchestrator()
+        payload = [
+            {"number": 1, "body": "", "state": "OPEN", "labels": [{"name": "bqa:ready-dev"}]},
+            {"number": 2, "body": "", "state": "OPEN", "labels": [{"name": "bqa:blocked"}]},
+            {"number": 3, "body": "", "state": "OPEN", "labels": [{"name": "bqa:ready-qa"}]},
+            {"number": 4, "body": "Depends on #2", "state": "OPEN", "labels": [{"name": "bqa:ready-dev"}]},
+            {"number": 5, "body": "", "state": "OPEN", "labels": [{"name": "bqa:in-dev"}]},
+            {"number": 6, "body": "", "state": "OPEN", "labels": []},
+        ]
+
+        orchestrator.open_issue_snapshot = lambda repo, execute, label=None: json.dumps(payload)
+
+        issues = orchestrator.list_candidate_issues("mshegolev/bqa-os", True, None)
+
+        self.assertEqual(issues, [1, 6])
+
+    def test_checkout_issue_branch_uses_existing_local_branch(self):
+        orchestrator = load_orchestrator()
+        calls = []
+
+        def fake_run(cmd, *, execute, capture=False, check=True):
+            calls.append(cmd)
+            if cmd[:3] == ["git", "rev-parse", "--verify"]:
+                return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        orchestrator.run = fake_run
+
+        orchestrator.checkout_issue_branch("codex/issue-28-sales-pilot-landing-page", True)
+
+        self.assertIn(["git", "checkout", "codex/issue-28-sales-pilot-landing-page"], calls)
+        self.assertNotIn(["git", "checkout", "-b", "codex/issue-28-sales-pilot-landing-page"], calls)
+
     def test_monitor_snapshot_counts_done_and_doing_buckets(self):
         orchestrator = load_orchestrator()
 
