@@ -701,6 +701,63 @@ def sanitize_bug_body(body: str, *, max_chars: int = MAX_GITHUB_ISSUE_BODY_CHARS
     return body[: max_chars - len(notice)].rstrip() + notice
 
 
+def qa_failure_marker(pr: int) -> str:
+    return f"BQA_QA_FAILURE_PR: {pr}"
+
+
+def add_qa_failure_marker(body: str, pr: int, *, max_chars: int = MAX_GITHUB_ISSUE_BODY_CHARS) -> str:
+    marker = qa_failure_marker(pr)
+    if marker in body:
+        return body
+    marker_block = f"\n\n---\n{marker}\n"
+    if len(body) + len(marker_block) <= max_chars:
+        return body.rstrip() + marker_block
+    notice = "\n\n[truncated: QA output exceeded GitHub issue body limit]\n"
+    available = max_chars - len(marker_block) - len(notice)
+    return body[:available].rstrip() + notice + marker_block
+
+
+def find_existing_qa_failure_issue(repo: str, pr: int, execute: bool) -> dict | None:
+    if not execute:
+        return None
+    result = run(
+        [
+            "gh",
+            "issue",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "open",
+            "--label",
+            "bqa:bug",
+            "--label",
+            "bqa:qa-failed",
+            "--limit",
+            "100",
+            "--json",
+            "number,title,body,url",
+            "--jq",
+            ".",
+        ],
+        execute=True,
+        capture=True,
+        check=False,
+    )
+    try:
+        issues = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:
+        return None
+    marker = qa_failure_marker(pr)
+    pull_ref = f"/pull/{pr}"
+    pr_ref = f"PR #{pr}"
+    for issue in issues:
+        haystack = f"{issue.get('title') or ''}\n{issue.get('body') or ''}"
+        if marker in haystack or pull_ref in haystack or pr_ref in haystack:
+            return issue
+    return None
+
+
 def cmd_qa(args: argparse.Namespace) -> None:
     require_tools(["gh", "codex"], args.execute)
     prompt = qa_prompt(args.pr, args.repo)
@@ -739,7 +796,11 @@ Linked PR/issue: PR #{args.pr}
         bug_title = re.search(r"BUG_TITLE:\s*(.+)", clean_out)
         bug_body = re.search(r"BUG_BODY:\s*(.*)", clean_out, re.S)
         title = bug_title.group(1).strip() if bug_title else f"QA bug found in PR #{args.pr}"
-        body = sanitize_bug_body(bug_body.group(1) if bug_body else clean_out)
+        existing_bug = find_existing_qa_failure_issue(args.repo, args.pr, args.execute)
+        if existing_bug:
+            log(f"QA failure for PR {args.pr} already tracked by issue #{existing_bug.get('number')}; skipping duplicate bug.")
+            return
+        body = add_qa_failure_marker(sanitize_bug_body(bug_body.group(1) if bug_body else clean_out), args.pr)
         body_file = TMP_DIR / f"bug_pr_{args.pr}.md"
         write(body_file, body)
         run(["gh", "issue", "create", "--repo", args.repo, "--title", title, "--body-file", str(body_file), "--label", "bqa:bug", "--label", "bqa:qa-failed", "--label", "bqa:ready-dev"], execute=True, check=False)

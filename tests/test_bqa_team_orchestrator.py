@@ -37,6 +37,8 @@ class AutopilotTests(unittest.TestCase):
                 if cmd[:2] == ["codex", "exec"]:
                     out = "QA_STATUS: FAIL\nBUG_TITLE: oversized bug\nBUG_BODY:\n" + long_bug_body
                     return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+                if cmd[:3] == ["gh", "issue", "list"]:
+                    return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
                 if cmd[:3] == ["gh", "issue", "create"]:
                     body_file = Path(cmd[cmd.index("--body-file") + 1])
                     created_issue_body_files.append(body_file)
@@ -83,6 +85,8 @@ class AutopilotTests(unittest.TestCase):
                         "diff --git a/README.md b/README.md\n"
                     )
                     return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+                if cmd[:3] == ["gh", "issue", "list"]:
+                    return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
                 if cmd[:3] == ["gh", "issue", "create"]:
                     body_file = Path(cmd[cmd.index("--body-file") + 1])
                     created_issue_body_files.append(body_file)
@@ -118,6 +122,8 @@ class AutopilotTests(unittest.TestCase):
                     return subprocess.CompletedProcess(cmd, 0, stdout="diff", stderr="")
                 if cmd[:2] == ["codex", "exec"]:
                     return subprocess.CompletedProcess(cmd, 124, stdout="", stderr="Command timed out after 0.05s")
+                if cmd[:3] == ["gh", "issue", "list"]:
+                    return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
                 if cmd[:3] == ["gh", "issue", "create"]:
                     created_issue_titles.append(cmd[cmd.index("--title") + 1])
                     created_issue_body_files.append(Path(cmd[cmd.index("--body-file") + 1]))
@@ -133,6 +139,90 @@ class AutopilotTests(unittest.TestCase):
             body = created_issue_body_files[0].read_text(encoding="utf-8")
             self.assertIn("QA automation command exited with status 124", body)
             self.assertIn("Command timed out", body)
+            self.assertIn("BQA_QA_FAILURE_PR: 73", body)
+
+    def test_cmd_qa_adds_dedupe_marker_to_new_bug_body(self):
+        orchestrator = load_orchestrator()
+        created_issue_body_files = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestrator.PROMPTS_DIR = Path(tmp) / "prompts"
+            orchestrator.RUNS_DIR = Path(tmp) / "runs"
+            orchestrator.TMP_DIR = Path(tmp) / "tmp"
+            orchestrator.load_role = lambda role: "QA role"
+            orchestrator.require_tools = lambda names, execute: None
+
+            def fake_run(cmd, *, execute, capture=False, check=True):
+                if cmd[:3] == ["gh", "pr", "diff"]:
+                    return subprocess.CompletedProcess(cmd, 0, stdout="diff", stderr="")
+                if cmd[:3] == ["gh", "issue", "list"]:
+                    return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+                if cmd[:2] == ["codex", "exec"]:
+                    out = (
+                        "QA_STATUS: FAIL\n"
+                        "BUG_TITLE: missing workflow\n"
+                        "BUG_BODY:\n"
+                        "What failed: workflow did not process sessions.\n"
+                    )
+                    return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+                if cmd[:3] == ["gh", "issue", "create"]:
+                    created_issue_body_files.append(Path(cmd[cmd.index("--body-file") + 1]))
+                    return subprocess.CompletedProcess(cmd, 0, stdout="https://example.test/bug\n", stderr="")
+                raise AssertionError(f"unexpected command: {cmd}")
+
+            orchestrator.run = fake_run
+            args = SimpleNamespace(repo="mshegolev/bqa-os", pr=69, execute=True)
+
+            orchestrator.cmd_qa(args)
+
+            self.assertEqual(len(created_issue_body_files), 1)
+            body = created_issue_body_files[0].read_text(encoding="utf-8")
+            self.assertIn("What failed: workflow did not process sessions.", body)
+            self.assertIn("BQA_QA_FAILURE_PR: 69", body)
+
+    def test_cmd_qa_reuses_existing_open_qa_failed_bug_for_same_pr(self):
+        orchestrator = load_orchestrator()
+        created_issue_titles = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestrator.PROMPTS_DIR = Path(tmp) / "prompts"
+            orchestrator.RUNS_DIR = Path(tmp) / "runs"
+            orchestrator.TMP_DIR = Path(tmp) / "tmp"
+            orchestrator.load_role = lambda role: "QA role"
+            orchestrator.require_tools = lambda names, execute: None
+
+            def fake_run(cmd, *, execute, capture=False, check=True):
+                if cmd[:3] == ["gh", "pr", "diff"]:
+                    return subprocess.CompletedProcess(cmd, 0, stdout="diff", stderr="")
+                if cmd[:3] == ["gh", "issue", "list"]:
+                    issues = [
+                        {
+                            "number": 88,
+                            "title": "PR #69 regresses current bqa build CLI behavior",
+                            "body": "Existing failure.\nBQA_QA_FAILURE_PR: 69\n",
+                            "url": "https://github.com/mshegolev/bqa-os/issues/88",
+                        }
+                    ]
+                    return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(issues), stderr="")
+                if cmd[:2] == ["codex", "exec"]:
+                    out = (
+                        "QA_STATUS: FAIL\n"
+                        "BUG_TITLE: duplicate candidate\n"
+                        "BUG_BODY:\n"
+                        "What failed: same PR still fails.\n"
+                    )
+                    return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+                if cmd[:3] == ["gh", "issue", "create"]:
+                    created_issue_titles.append(cmd[cmd.index("--title") + 1])
+                    return subprocess.CompletedProcess(cmd, 0, stdout="https://example.test/bug\n", stderr="")
+                raise AssertionError(f"unexpected command: {cmd}")
+
+            orchestrator.run = fake_run
+            args = SimpleNamespace(repo="mshegolev/bqa-os", pr=69, execute=True)
+
+            orchestrator.cmd_qa(args)
+
+            self.assertEqual(created_issue_titles, [])
 
     def test_cmd_business_accept_writes_revise_when_codex_command_fails(self):
         orchestrator = load_orchestrator()
