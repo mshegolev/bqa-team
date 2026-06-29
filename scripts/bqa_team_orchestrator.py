@@ -595,7 +595,12 @@ BUG_BODY:
 """.strip()
 
 
+def strip_codex_stdin_echo(content: str) -> str:
+    return re.split(r"(?m)^Reading additional input from stdin\.\.\.\s*$", content, maxsplit=1)[0]
+
+
 def sanitize_bug_body(body: str, *, max_chars: int = MAX_GITHUB_ISSUE_BODY_CHARS) -> str:
+    body = strip_codex_stdin_echo(body)
     body = re.split(r"\n\s*tokens used\b", body, maxsplit=1, flags=re.I)[0].strip()
     if len(body) <= max_chars:
         return body
@@ -614,12 +619,14 @@ def cmd_qa(args: argparse.Namespace) -> None:
     else:
         out = "QA_STATUS: DRY-RUN\n"
         print("DRY-RUN: would run Codex QA review")
-    write(RUNS_DIR / f"qa_pr_{args.pr}.out.txt", out)
-    if args.execute and "QA_STATUS: FAIL" in out:
-        bug_title = re.search(r"BUG_TITLE:\s*(.+)", out)
-        bug_body = re.search(r"BUG_BODY:\s*(.*)", out, re.S)
+    output_path = RUNS_DIR / f"qa_pr_{args.pr}.out.txt"
+    write(output_path, out)
+    if args.execute and run_output_has_status(output_path, "QA_STATUS", "FAIL"):
+        clean_out = strip_codex_stdin_echo(out)
+        bug_title = re.search(r"BUG_TITLE:\s*(.+)", clean_out)
+        bug_body = re.search(r"BUG_BODY:\s*(.*)", clean_out, re.S)
         title = bug_title.group(1).strip() if bug_title else f"QA bug found in PR #{args.pr}"
-        body = sanitize_bug_body(bug_body.group(1) if bug_body else out)
+        body = sanitize_bug_body(bug_body.group(1) if bug_body else clean_out)
         body_file = TMP_DIR / f"bug_pr_{args.pr}.md"
         write(body_file, body)
         run(["gh", "issue", "create", "--repo", args.repo, "--title", title, "--body-file", str(body_file), "--label", "bqa:bug", "--label", "bqa:qa-failed", "--label", "bqa:ready-dev"], execute=True, check=False)
@@ -818,7 +825,7 @@ def run_output_contains(path: Path, marker: str) -> bool:
 def run_output_has_status(path: Path, key: str, value: str) -> bool:
     if not path.exists():
         return False
-    content = re.split(r"(?m)^Reading additional input from stdin\.\.\.\s*$", read(path), maxsplit=1)[0]
+    content = strip_codex_stdin_echo(read(path))
     content = re.sub(r"(?ms)^```[^\n]*\n.*?^```", "", content)
     pattern = re.compile(rf"^\s*{re.escape(key)}\s*:\s*{re.escape(value)}\b", re.MULTILINE)
     return bool(pattern.search(content))
