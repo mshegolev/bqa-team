@@ -42,6 +42,7 @@ PROJECT_VIEW_HTML = STATUS_DIR / "project-view.html"
 AUTOPILOT_CONFIG = TEAM_DIR / "autopilot-config.json"
 STATE_FILE = TEAM_DIR / "state.json"
 LAST_AUTOPILOT_CYCLE: dict = {}
+MAX_GITHUB_ISSUE_BODY_CHARS = 60000
 
 LABELS = {
     "bqa:business": "Business-originated task",
@@ -593,6 +594,14 @@ BUG_BODY:
 """.strip()
 
 
+def sanitize_bug_body(body: str, *, max_chars: int = MAX_GITHUB_ISSUE_BODY_CHARS) -> str:
+    body = re.split(r"\n\s*tokens used\b", body, maxsplit=1, flags=re.I)[0].strip()
+    if len(body) <= max_chars:
+        return body
+    notice = "\n\n[truncated: QA output exceeded GitHub issue body limit]\n"
+    return body[: max_chars - len(notice)].rstrip() + notice
+
+
 def cmd_qa(args: argparse.Namespace) -> None:
     require_tools(["gh", "codex"], args.execute)
     prompt = qa_prompt(args.pr, args.repo)
@@ -609,7 +618,7 @@ def cmd_qa(args: argparse.Namespace) -> None:
         bug_title = re.search(r"BUG_TITLE:\s*(.+)", out)
         bug_body = re.search(r"BUG_BODY:\s*(.*)", out, re.S)
         title = bug_title.group(1).strip() if bug_title else f"QA bug found in PR #{args.pr}"
-        body = bug_body.group(1).strip() if bug_body else out
+        body = sanitize_bug_body(bug_body.group(1) if bug_body else out)
         body_file = TMP_DIR / f"bug_pr_{args.pr}.md"
         write(body_file, body)
         run(["gh", "issue", "create", "--repo", args.repo, "--title", title, "--body-file", str(body_file), "--label", "bqa:bug", "--label", "bqa:qa-failed", "--label", "bqa:ready-dev"], execute=True, check=False)
