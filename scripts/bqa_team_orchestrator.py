@@ -202,7 +202,7 @@ def format_command_failure(command_name: str, returncode: int, stdout: str | Non
 
 def block_dev_issue(args: argparse.Namespace, output_path: Path, reason: str) -> None:
     append(output_path, append_runtime_failure_status("", reason))
-    run(["gh", "issue", "edit", str(args.issue), "--repo", args.repo, "--add-label", "bqa:blocked"], execute=True, check=False)
+    edit_issue_labels(args.repo, args.issue, execute=True, remove=["bqa:in-dev"], add=["bqa:blocked"])
     log("Developer stage blocked by runtime failure. See run output before continuing.")
 
 
@@ -619,7 +619,7 @@ def cmd_dev(args: argparse.Namespace) -> None:
         output_path = RUNS_DIR / f"dev_issue_{args.issue}.out.txt"
         write(output_path, out)
         if run_output_has_status(output_path, "QUESTION_STATUS", "OPEN"):
-            run(["gh", "issue", "edit", str(args.issue), "--repo", args.repo, "--add-label", "bqa:blocked"], execute=True, check=False)
+            edit_issue_labels(args.repo, args.issue, execute=True, remove=["bqa:in-dev"], add=["bqa:blocked"])
             log("Developer raised an open question. See run output before continuing.")
             return
     test_result = run(["go", "test", "./..."], execute=args.execute, capture=args.execute, check=False)
@@ -1630,7 +1630,7 @@ def run_autopilot_cycle(args: argparse.Namespace) -> str:
     pr = find_pr_for_branch(args.repo, branch, args.execute)
     if pr is None:
         log(f"No open PR found for branch {branch}.")
-        edit_issue_labels(args.repo, issue, execute=args.execute, add=["bqa:blocked"])
+        edit_issue_labels(args.repo, issue, execute=args.execute, remove=["bqa:ready-qa", "bqa:ready-business"], add=["bqa:blocked"])
         set_last_autopilot_cycle({**cycle_details, "status": "blocked", "stop_reason": "missing_pr"})
         return "blocked"
 
@@ -1664,7 +1664,7 @@ def run_autopilot_cycle(args: argparse.Namespace) -> str:
     cmd_business_accept(cycle_args)
     if run_output_has_status(RUNS_DIR / f"business_accept_pr_{pr}.out.txt", "BUSINESS_STATUS", "REVISE"):
         log(f"Business requested revision for PR {pr}.")
-        edit_issue_labels(args.repo, issue, execute=args.execute, add=["bqa:blocked"])
+        edit_issue_labels(args.repo, issue, execute=args.execute, remove=["bqa:ready-business"], add=["bqa:blocked"])
         set_last_autopilot_cycle({**cycle_details, "status": "blocked", "stop_reason": "business_revision"})
         return "blocked"
 
