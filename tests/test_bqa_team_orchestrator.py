@@ -53,6 +53,69 @@ class AutopilotTests(unittest.TestCase):
             self.assertIn("What failed:", body)
             self.assertIn("truncated", body.lower())
 
+    def test_cmd_dev_ignores_prompt_echo_question_status_before_blocking(self):
+        orchestrator = load_orchestrator()
+        calls = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestrator.PROMPTS_DIR = Path(tmp) / "prompts"
+            orchestrator.RUNS_DIR = Path(tmp) / "runs"
+            orchestrator.require_tools = lambda names, execute: None
+            orchestrator.load_subagent = lambda subagent: "Developer role"
+            orchestrator.load_role = lambda role: "Architect role"
+            orchestrator.checkout_issue_branch = lambda branch, execute: calls.append(("checkout", branch))
+            orchestrator.issue_json = lambda repo, issue, execute: json.dumps(
+                {"title": "ETL QA Agent Pack MVP", "body": "Build it", "labels": []}
+            )
+
+            def fake_run(cmd, *, execute, capture=False, check=True):
+                calls.append(tuple(cmd))
+                if cmd[:2] == ["codex", "exec"]:
+                    out = (
+                        "Implemented feature successfully.\n"
+                        "\n"
+                        "Reading additional input from stdin...\n"
+                        "user\n"
+                        "If blocked, output:\n"
+                        "QUESTION_STATUS: OPEN\n"
+                    )
+                    return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+                return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+            orchestrator.run = fake_run
+            args = SimpleNamespace(
+                repo="mshegolev/bqa-os",
+                issue=64,
+                execute=True,
+                branch=None,
+                subagent="go-cli-implementer",
+                auto_commit=True,
+                base_branch="main",
+            )
+
+            orchestrator.cmd_dev(args)
+
+        self.assertNotIn(
+            ("gh", "issue", "edit", "64", "--repo", "mshegolev/bqa-os", "--add-label", "bqa:blocked"),
+            calls,
+        )
+        self.assertIn(("git", "commit", "-m", "Implement issue #64: ETL QA Agent Pack MVP"), calls)
+        self.assertIn(
+            (
+                "gh",
+                "issue",
+                "edit",
+                "64",
+                "--repo",
+                "mshegolev/bqa-os",
+                "--remove-label",
+                "bqa:in-dev",
+                "--add-label",
+                "bqa:ready-qa",
+            ),
+            calls,
+        )
+
     def test_run_updates_autopilot_heartbeat_while_command_runs(self):
         orchestrator = load_orchestrator()
 
