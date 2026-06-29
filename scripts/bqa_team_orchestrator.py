@@ -16,6 +16,7 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import time
 from copy import copy
@@ -37,6 +38,8 @@ STATUS_JSON = STATUS_DIR / "autopilot-status.json"
 STATUS_MD = STATUS_DIR / "autopilot-status.md"
 AUTOPILOT_HISTORY = STATUS_DIR / "autopilot-history.jsonl"
 HEARTBEAT_INTERVAL_SECONDS = float(os.environ.get("BQA_AUTOPILOT_HEARTBEAT_SECONDS", "5"))
+COMMAND_TIMEOUT_SECONDS = float(os.environ.get("BQA_COMMAND_TIMEOUT_SECONDS", "1800"))
+COMMAND_TIMEOUT_RETURN_CODE = 124
 PROJECT_VIEW_JSON = STATUS_DIR / "project-view.json"
 PROJECT_VIEW_HTML = STATUS_DIR / "project-view.html"
 AUTOPILOT_CONFIG = TEAM_DIR / "autopilot-config.json"
@@ -161,6 +164,48 @@ def touch_autopilot_heartbeat() -> None:
     (STATUS_DIR / "autopilot-heartbeat").write_text(now() + "\n", encoding="utf-8")
 
 
+def terminate_process_group(process: subprocess.Popen[str]) -> tuple[str | None, str | None]:
+    try:
+        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
+    try:
+        return process.communicate(timeout=2)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        return process.communicate()
+
+
+def append_runtime_failure_status(out: str, status_block: str) -> str:
+    if not out.endswith("\n"):
+        out += "\n"
+    return out + "\n" + status_block.strip() + "\n"
+
+
+def format_command_failure(command_name: str, returncode: int, stdout: str | None, stderr: str | None) -> str:
+    details = [
+        f"QUESTION_STATUS: OPEN",
+        "QUESTION_TYPE: runtime",
+        "BLOCKS_ISSUE: true",
+        "",
+        f"{command_name} exited with status {returncode}.",
+    ]
+    if stdout:
+        details += ["", "STDOUT:", stdout.strip()]
+    if stderr:
+        details += ["", "STDERR:", stderr.strip()]
+    return "\n".join(details)
+
+
+def block_dev_issue(args: argparse.Namespace, output_path: Path, reason: str) -> None:
+    append(output_path, append_runtime_failure_status("", reason))
+    run(["gh", "issue", "edit", str(args.issue), "--repo", args.repo, "--add-label", "bqa:blocked"], execute=True, check=False)
+    log("Developer stage blocked by runtime failure. See run output before continuing.")
+
+
 def run(cmd: list[str], *, execute: bool, capture: bool = False, check: bool = True) -> subprocess.CompletedProcess[str]:
     printable = " ".join(shlex.quote(c) for c in cmd)
     if not execute:
@@ -172,21 +217,36 @@ def run(cmd: list[str], *, execute: bool, capture: bool = False, check: bool = T
         cmd,
         cwd=str(ROOT),
         text=True,
+        start_new_session=True,
         stdout=subprocess.PIPE if capture else None,
         stderr=subprocess.PIPE if capture else None,
     )
     stdout: str | None = None
     stderr: str | None = None
+    deadline = time.monotonic() + COMMAND_TIMEOUT_SECONDS if COMMAND_TIMEOUT_SECONDS > 0 else None
+    timed_out = False
     while True:
+        if deadline is not None and time.monotonic() >= deadline:
+            timed_out = True
+            break
+        timeout = HEARTBEAT_INTERVAL_SECONDS
+        if deadline is not None:
+            timeout = max(0.01, min(timeout, deadline - time.monotonic()))
         try:
-            stdout, stderr = process.communicate(timeout=HEARTBEAT_INTERVAL_SECONDS)
+            stdout, stderr = process.communicate(timeout=timeout)
             break
         except subprocess.TimeoutExpired:
             touch_autopilot_heartbeat()
+    if timed_out:
+        log(f"TIMEOUT after {COMMAND_TIMEOUT_SECONDS:.1f}s: {printable}")
+        stdout, stderr = terminate_process_group(process)
+        timeout_message = f"Command timed out after {COMMAND_TIMEOUT_SECONDS:.1f}s: {printable}\n"
+        stderr = (stderr or "") + timeout_message
     touch_autopilot_heartbeat()
-    result = subprocess.CompletedProcess(cmd, process.returncode, stdout=stdout, stderr=stderr)
-    if check and process.returncode:
-        raise subprocess.CalledProcessError(process.returncode, cmd, output=stdout, stderr=stderr)
+    returncode = COMMAND_TIMEOUT_RETURN_CODE if timed_out else process.returncode
+    result = subprocess.CompletedProcess(cmd, returncode, stdout=stdout, stderr=stderr)
+    if check and result.returncode:
+        raise subprocess.CalledProcessError(result.returncode, cmd, output=stdout, stderr=stderr)
     return result
 
 
@@ -550,24 +610,57 @@ def cmd_dev(args: argparse.Namespace) -> None:
     run(["gh", "issue", "edit", str(args.issue), "--repo", args.repo, "--remove-label", "bqa:ready-dev", "--add-label", "bqa:in-dev"], execute=args.execute, check=False)
     result = run(["codex", "exec", prompt], execute=args.execute, capture=args.execute, check=False)
     if args.execute:
-        out = result.stdout + "\n" + result.stderr
+        out = (result.stdout or "") + "\n" + (result.stderr or "")
+        if result.returncode:
+            out = append_runtime_failure_status(
+                out,
+                format_command_failure("Codex implementation command", result.returncode, result.stdout, result.stderr),
+            )
         output_path = RUNS_DIR / f"dev_issue_{args.issue}.out.txt"
         write(output_path, out)
         if run_output_has_status(output_path, "QUESTION_STATUS", "OPEN"):
             run(["gh", "issue", "edit", str(args.issue), "--repo", args.repo, "--add-label", "bqa:blocked"], execute=True, check=False)
             log("Developer raised an open question. See run output before continuing.")
             return
-    run(["go", "test", "./..."], execute=args.execute, check=False)
+    test_result = run(["go", "test", "./..."], execute=args.execute, capture=args.execute, check=False)
+    if args.execute and test_result.returncode:
+        block_dev_issue(
+            args,
+            RUNS_DIR / f"dev_issue_{args.issue}.out.txt",
+            format_command_failure("go test ./...", test_result.returncode, test_result.stdout, test_result.stderr),
+        )
+        return
     run(["git", "status", "--short"], execute=args.execute, check=False)
     if args.auto_commit:
         run(["git", "add", "."], execute=args.execute)
-        run(["git", "commit", "-m", f"Implement issue #{args.issue}: {title}"], execute=args.execute, check=False)
-        run(["git", "push", "-u", "origin", branch], execute=args.execute, check=False)
+        commit_result = run(["git", "commit", "-m", f"Implement issue #{args.issue}: {title}"], execute=args.execute, capture=args.execute, check=False)
+        if args.execute and commit_result.returncode:
+            block_dev_issue(
+                args,
+                RUNS_DIR / f"dev_issue_{args.issue}.out.txt",
+                format_command_failure("git commit", commit_result.returncode, commit_result.stdout, commit_result.stderr),
+            )
+            return
+        push_result = run(["git", "push", "-u", "origin", branch], execute=args.execute, capture=args.execute, check=False)
+        if args.execute and push_result.returncode:
+            block_dev_issue(
+                args,
+                RUNS_DIR / f"dev_issue_{args.issue}.out.txt",
+                format_command_failure("git push", push_result.returncode, push_result.stdout, push_result.stderr),
+            )
+            return
         body = f"Implements #{args.issue}.\n\nGenerated by BQA Team Orchestrator.\n\nChecklist:\n- [ ] go test ./... passes\n- [ ] QA review pending\n- [ ] Business acceptance pending\n"
         pr_cmd = ["gh", "pr", "create", "--repo", args.repo, "--title", f"Implement #{args.issue}: {title}", "--body", body]
         if getattr(args, "base_branch", None):
             pr_cmd += ["--base", args.base_branch]
-        run(pr_cmd, execute=args.execute, check=False)
+        pr_result = run(pr_cmd, execute=args.execute, capture=args.execute, check=False)
+        if args.execute and pr_result.returncode:
+            block_dev_issue(
+                args,
+                RUNS_DIR / f"dev_issue_{args.issue}.out.txt",
+                format_command_failure("gh pr create", pr_result.returncode, pr_result.stdout, pr_result.stderr),
+            )
+            return
     run(["gh", "issue", "edit", str(args.issue), "--repo", args.repo, "--remove-label", "bqa:in-dev", "--add-label", "bqa:ready-qa"], execute=args.execute, check=False)
 
 
@@ -613,9 +706,29 @@ def cmd_qa(args: argparse.Namespace) -> None:
     prompt = qa_prompt(args.pr, args.repo)
     write(PROMPTS_DIR / f"qa_pr_{args.pr}.md", prompt)
     if args.execute:
-        diff = run(["gh", "pr", "diff", str(args.pr), "--repo", args.repo], execute=True, capture=True, check=False).stdout
+        diff = run(["gh", "pr", "diff", str(args.pr), "--repo", args.repo], execute=True, capture=True, check=False).stdout or ""
         result = run(["codex", "exec", prompt + "\n\nPR diff:\n\n" + diff[:30000]], execute=True, capture=True, check=False)
-        out = result.stdout + "\n" + result.stderr
+        out = (result.stdout or "") + "\n" + (result.stderr or "")
+        if result.returncode:
+            out = append_runtime_failure_status(
+                out,
+                f"""
+QA_STATUS: FAIL
+BUG_TITLE: QA automation failed for PR #{args.pr}
+BUG_BODY:
+What failed: QA automation command exited with status {result.returncode}.
+Expected behavior: QA review should complete and return QA_STATUS: PASS or FAIL.
+Actual behavior:
+{result.stderr or "No stderr captured."}
+
+Reproduction steps:
+1. Run the QA review for PR #{args.pr}.
+2. Observe the command exit status {result.returncode}.
+
+Suggested fix: inspect the local runtime, Codex command logs, and PR diff size before retrying QA.
+Linked PR/issue: PR #{args.pr}
+""",
+            )
     else:
         out = "QA_STATUS: DRY-RUN\n"
         print("DRY-RUN: would run Codex QA review")
@@ -659,9 +772,19 @@ def cmd_business_accept(args: argparse.Namespace) -> None:
     prompt = business_prompt(args.pr, args.repo)
     write(PROMPTS_DIR / f"business_accept_pr_{args.pr}.md", prompt)
     if args.execute:
-        diff = run(["gh", "pr", "diff", str(args.pr), "--repo", args.repo], execute=True, capture=True, check=False).stdout
+        diff = run(["gh", "pr", "diff", str(args.pr), "--repo", args.repo], execute=True, capture=True, check=False).stdout or ""
         result = run(["codex", "exec", prompt + "\n\nPR diff:\n\n" + diff[:30000]], execute=True, capture=True, check=False)
-        out = result.stdout + "\n" + result.stderr
+        out = (result.stdout or "") + "\n" + (result.stderr or "")
+        if result.returncode:
+            out = append_runtime_failure_status(
+                out,
+                f"""
+BUSINESS_STATUS: REVISE
+REASON:
+Business acceptance command exited with status {result.returncode}.
+{result.stderr or "No stderr captured."}
+""",
+            )
     else:
         out = "BUSINESS_STATUS: DRY-RUN\n"
         print("DRY-RUN: would run Codex business acceptance")
@@ -1384,7 +1507,7 @@ def run_autopilot_cycle(args: argparse.Namespace) -> str:
     issue_label = None if getattr(args, "all_open", False) else args.issue_label
     resume_stage = "dev"
     ready = list_candidate_issues(args.repo, args.execute, issue_label)
-    if not ready and issue_label == "bqa:ready-dev":
+    if not ready and issue_label in {None, "bqa:ready-dev"}:
         for stage_label, stage in (("bqa:ready-qa", "qa"), ("bqa:ready-business", "business")):
             ready = list_candidate_issues(args.repo, args.execute, stage_label)
             if ready:

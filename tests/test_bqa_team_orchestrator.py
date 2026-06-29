@@ -2,6 +2,7 @@ import importlib.util
 import json
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -100,6 +101,65 @@ class AutopilotTests(unittest.TestCase):
             self.assertNotIn("QA_STATUS: PASS or FAIL", body)
             self.assertNotIn("diff --git", body)
 
+    def test_cmd_qa_creates_bug_when_codex_command_fails(self):
+        orchestrator = load_orchestrator()
+        created_issue_body_files = []
+        created_issue_titles = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestrator.PROMPTS_DIR = Path(tmp) / "prompts"
+            orchestrator.RUNS_DIR = Path(tmp) / "runs"
+            orchestrator.TMP_DIR = Path(tmp) / "tmp"
+            orchestrator.load_role = lambda role: "QA role"
+            orchestrator.require_tools = lambda names, execute: None
+
+            def fake_run(cmd, *, execute, capture=False, check=True):
+                if cmd[:3] == ["gh", "pr", "diff"]:
+                    return subprocess.CompletedProcess(cmd, 0, stdout="diff", stderr="")
+                if cmd[:2] == ["codex", "exec"]:
+                    return subprocess.CompletedProcess(cmd, 124, stdout="", stderr="Command timed out after 0.05s")
+                if cmd[:3] == ["gh", "issue", "create"]:
+                    created_issue_titles.append(cmd[cmd.index("--title") + 1])
+                    created_issue_body_files.append(Path(cmd[cmd.index("--body-file") + 1]))
+                    return subprocess.CompletedProcess(cmd, 0, stdout="https://example.test/bug\n", stderr="")
+                raise AssertionError(f"unexpected command: {cmd}")
+
+            orchestrator.run = fake_run
+            args = SimpleNamespace(repo="mshegolev/bqa-os", pr=73, execute=True)
+
+            orchestrator.cmd_qa(args)
+
+            self.assertEqual(created_issue_titles, ["QA automation failed for PR #73"])
+            body = created_issue_body_files[0].read_text(encoding="utf-8")
+            self.assertIn("QA automation command exited with status 124", body)
+            self.assertIn("Command timed out", body)
+
+    def test_cmd_business_accept_writes_revise_when_codex_command_fails(self):
+        orchestrator = load_orchestrator()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestrator.PROMPTS_DIR = Path(tmp) / "prompts"
+            orchestrator.RUNS_DIR = Path(tmp) / "runs"
+            orchestrator.load_role = lambda role: "Business role"
+            orchestrator.require_tools = lambda names, execute: None
+
+            def fake_run(cmd, *, execute, capture=False, check=True):
+                if cmd[:3] == ["gh", "pr", "diff"]:
+                    return subprocess.CompletedProcess(cmd, 0, stdout="diff", stderr="")
+                if cmd[:2] == ["codex", "exec"]:
+                    return subprocess.CompletedProcess(cmd, 124, stdout="", stderr="Command timed out after 0.05s")
+                raise AssertionError(f"unexpected command: {cmd}")
+
+            orchestrator.run = fake_run
+            args = SimpleNamespace(repo="mshegolev/bqa-os", pr=74, execute=True)
+
+            orchestrator.cmd_business_accept(args)
+
+            output = (orchestrator.RUNS_DIR / "business_accept_pr_74.out.txt").read_text(encoding="utf-8")
+            self.assertIn("BUSINESS_STATUS: REVISE", output)
+            self.assertIn("Business acceptance command exited with status 124", output)
+            self.assertIn("Command timed out", output)
+
     def test_cmd_dev_ignores_prompt_echo_question_status_before_blocking(self):
         orchestrator = load_orchestrator()
         calls = []
@@ -183,6 +243,197 @@ class AutopilotTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0)
             self.assertEqual(result.stdout.strip(), "ok")
             self.assertTrue((orchestrator.STATUS_DIR / "autopilot-heartbeat").exists())
+
+    def test_run_times_out_and_returns_failure_without_waiting_forever(self):
+        orchestrator = load_orchestrator()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestrator.STATUS_DIR = Path(tmp) / "status"
+            orchestrator.HEARTBEAT_INTERVAL_SECONDS = 0.02
+            orchestrator.COMMAND_TIMEOUT_SECONDS = 0.05
+
+            started = time.monotonic()
+            result = orchestrator.run(
+                [
+                    "python3",
+                    "-c",
+                    "import time; time.sleep(1)",
+                ],
+                execute=True,
+                capture=True,
+                check=False,
+            )
+            elapsed = time.monotonic() - started
+
+            self.assertEqual(result.returncode, orchestrator.COMMAND_TIMEOUT_RETURN_CODE)
+            self.assertLess(elapsed, 0.5)
+            self.assertIn("timed out", result.stderr.lower())
+            self.assertTrue((orchestrator.STATUS_DIR / "autopilot-heartbeat").exists())
+
+    def test_cmd_dev_blocks_when_codex_command_fails(self):
+        orchestrator = load_orchestrator()
+        calls = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestrator.PROMPTS_DIR = Path(tmp) / "prompts"
+            orchestrator.RUNS_DIR = Path(tmp) / "runs"
+            orchestrator.load_subagent = lambda key: "Developer role"
+            orchestrator.load_role = lambda role: "Architect role"
+            orchestrator.require_tools = lambda names, execute: None
+            orchestrator.issue_json = lambda repo, number, execute: json.dumps(
+                {"title": "Hung implementation", "body": "Build it", "labels": []}
+            )
+            orchestrator.checkout_issue_branch = lambda branch, execute: calls.append(("checkout", branch))
+
+            def fake_run(cmd, *, execute, capture=False, check=True):
+                calls.append(tuple(cmd))
+                if cmd[:2] == ["codex", "exec"]:
+                    return subprocess.CompletedProcess(cmd, 124, stdout="", stderr="Command timed out after 0.05s")
+                if cmd[:2] == ["go", "test"]:
+                    raise AssertionError("go test should not run after failed Codex implementation")
+                return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+            orchestrator.run = fake_run
+            args = SimpleNamespace(
+                repo="mshegolev/bqa-os",
+                issue=90,
+                branch=None,
+                execute=True,
+                auto_commit=True,
+                subagent="go-cli-implementer",
+            )
+
+            orchestrator.cmd_dev(args)
+
+            output = (orchestrator.RUNS_DIR / "dev_issue_90.out.txt").read_text(encoding="utf-8")
+            self.assertIn("QUESTION_STATUS: OPEN", output)
+            self.assertIn("QUESTION_TYPE: runtime", output)
+            self.assertIn("Command timed out", output)
+            self.assertIn(
+                (
+                    "gh",
+                    "issue",
+                    "edit",
+                    "90",
+                    "--repo",
+                    "mshegolev/bqa-os",
+                    "--add-label",
+                    "bqa:blocked",
+                ),
+                calls,
+            )
+
+    def test_cmd_dev_blocks_when_go_test_fails(self):
+        orchestrator = load_orchestrator()
+        calls = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestrator.PROMPTS_DIR = Path(tmp) / "prompts"
+            orchestrator.RUNS_DIR = Path(tmp) / "runs"
+            orchestrator.load_subagent = lambda key: "Developer role"
+            orchestrator.load_role = lambda role: "Architect role"
+            orchestrator.require_tools = lambda names, execute: None
+            orchestrator.issue_json = lambda repo, number, execute: json.dumps(
+                {"title": "Failing tests", "body": "Build it", "labels": []}
+            )
+            orchestrator.checkout_issue_branch = lambda branch, execute: calls.append(("checkout", branch))
+
+            def fake_run(cmd, *, execute, capture=False, check=True):
+                calls.append(tuple(cmd))
+                if cmd[:2] == ["codex", "exec"]:
+                    return subprocess.CompletedProcess(cmd, 0, stdout="implemented", stderr="")
+                if cmd[:2] == ["go", "test"]:
+                    return subprocess.CompletedProcess(cmd, 1, stdout="FAIL ./...", stderr="")
+                return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+            orchestrator.run = fake_run
+            args = SimpleNamespace(
+                repo="mshegolev/bqa-os",
+                issue=91,
+                branch=None,
+                execute=True,
+                auto_commit=True,
+                subagent="go-cli-implementer",
+            )
+
+            orchestrator.cmd_dev(args)
+
+            output = (orchestrator.RUNS_DIR / "dev_issue_91.out.txt").read_text(encoding="utf-8")
+            self.assertIn("QUESTION_STATUS: OPEN", output)
+            self.assertIn("go test ./... exited with status 1", output)
+            self.assertIn(("gh", "issue", "edit", "91", "--repo", "mshegolev/bqa-os", "--add-label", "bqa:blocked"), calls)
+            self.assertNotIn(("git", "commit", "-m", "Implement issue #91: Failing tests"), calls)
+            self.assertNotIn(
+                (
+                    "gh",
+                    "issue",
+                    "edit",
+                    "91",
+                    "--repo",
+                    "mshegolev/bqa-os",
+                    "--remove-label",
+                    "bqa:in-dev",
+                    "--add-label",
+                    "bqa:ready-qa",
+                ),
+                calls,
+            )
+
+    def test_cmd_dev_blocks_when_pr_create_fails(self):
+        orchestrator = load_orchestrator()
+        calls = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestrator.PROMPTS_DIR = Path(tmp) / "prompts"
+            orchestrator.RUNS_DIR = Path(tmp) / "runs"
+            orchestrator.load_subagent = lambda key: "Developer role"
+            orchestrator.load_role = lambda role: "Architect role"
+            orchestrator.require_tools = lambda names, execute: None
+            orchestrator.issue_json = lambda repo, number, execute: json.dumps(
+                {"title": "PR failure", "body": "Build it", "labels": []}
+            )
+            orchestrator.checkout_issue_branch = lambda branch, execute: calls.append(("checkout", branch))
+
+            def fake_run(cmd, *, execute, capture=False, check=True):
+                calls.append(tuple(cmd))
+                if cmd[:2] == ["codex", "exec"]:
+                    return subprocess.CompletedProcess(cmd, 0, stdout="implemented", stderr="")
+                if cmd[:3] == ["gh", "pr", "create"]:
+                    return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="GraphQL error")
+                return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+            orchestrator.run = fake_run
+            args = SimpleNamespace(
+                repo="mshegolev/bqa-os",
+                issue=92,
+                branch=None,
+                execute=True,
+                auto_commit=True,
+                subagent="go-cli-implementer",
+            )
+
+            orchestrator.cmd_dev(args)
+
+            output = (orchestrator.RUNS_DIR / "dev_issue_92.out.txt").read_text(encoding="utf-8")
+            self.assertIn("QUESTION_STATUS: OPEN", output)
+            self.assertIn("gh pr create exited with status 1", output)
+            self.assertIn("GraphQL error", output)
+            self.assertIn(("gh", "issue", "edit", "92", "--repo", "mshegolev/bqa-os", "--add-label", "bqa:blocked"), calls)
+            self.assertNotIn(
+                (
+                    "gh",
+                    "issue",
+                    "edit",
+                    "92",
+                    "--repo",
+                    "mshegolev/bqa-os",
+                    "--remove-label",
+                    "bqa:in-dev",
+                    "--add-label",
+                    "bqa:ready-qa",
+                ),
+                calls,
+            )
 
     def test_autopilot_cycle_runs_dev_qa_business_acceptance_and_marks_done(self):
         orchestrator = load_orchestrator()
@@ -330,6 +581,65 @@ class AutopilotTests(unittest.TestCase):
 
         self.assertEqual(status, "processed")
         self.assertIn(("find-pr", "codex/issue-31-static-site-upload-flow"), events)
+        self.assertNotIn(("dev", 31), events)
+        self.assertIn(("qa", 88), events)
+        self.assertIn(("business", 88), events)
+
+    def test_autopilot_all_open_resumes_ready_qa_when_no_dev_candidates(self):
+        orchestrator = load_orchestrator()
+        events = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestrator.RUNS_DIR = Path(tmp) / "runs"
+
+            def fake_list_candidate_issues(repo, execute, label="bqa:ready-dev"):
+                events.append(("list", label))
+                if label == "bqa:ready-qa":
+                    return [31]
+                return []
+
+            orchestrator.list_candidate_issues = fake_list_candidate_issues
+            orchestrator.issue_json = lambda repo, number, execute: json.dumps(
+                {"title": "Static site upload flow", "body": "Verify it", "labels": [{"name": "bqa:ready-qa"}]}
+            )
+            orchestrator.cmd_dev = lambda args: events.append(("dev", args.issue))
+
+            def fake_qa(args):
+                events.append(("qa", args.pr))
+                orchestrator.write(orchestrator.RUNS_DIR / "qa_pr_88.out.txt", "QA_STATUS: PASS\n")
+
+            def fake_business(args):
+                events.append(("business", args.pr))
+                orchestrator.write(
+                    orchestrator.RUNS_DIR / "business_accept_pr_88.out.txt",
+                    "BUSINESS_STATUS: ACCEPT\n",
+                )
+
+            orchestrator.cmd_qa = fake_qa
+            orchestrator.cmd_business_accept = fake_business
+            orchestrator.find_pr_for_branch = lambda repo, branch, execute: 88
+            orchestrator.run = lambda cmd, *, execute, capture=False, check=True: subprocess.CompletedProcess(
+                cmd, 0, stdout="", stderr=""
+            )
+
+            args = SimpleNamespace(
+                repo="mshegolev/bqa-os",
+                execute=True,
+                issue_label="bqa:ready-dev",
+                all_open=True,
+                oldest_first=True,
+                auto_commit=True,
+                merge=True,
+                close_issue=True,
+                stop_on_fail=True,
+                branch=None,
+            )
+
+            status = orchestrator.run_autopilot_cycle(args)
+
+        self.assertEqual(status, "processed")
+        self.assertIn(("list", None), events)
+        self.assertIn(("list", "bqa:ready-qa"), events)
         self.assertNotIn(("dev", 31), events)
         self.assertIn(("qa", 88), events)
         self.assertIn(("business", 88), events)
