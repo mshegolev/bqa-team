@@ -37,9 +37,13 @@ fi
 
 STATUS_DIR="$TARGET_REPO/.bqa-team/status"
 LOG_DIR="$TARGET_REPO/.bqa-team/logs"
+RUNS_DIR="$TARGET_REPO/.bqa-team/generated/runs"
 PID_FILE="$STATUS_DIR/autopilot.pid"
 LOG_FILE="$LOG_DIR/autopilot.log"
 STATUS_MD="$STATUS_DIR/autopilot-status.md"
+HISTORY_FILE="$STATUS_DIR/autopilot-history.jsonl"
+STALE_SECONDS="${BQA_AUTOPILOT_STALE_SECONDS:-900}"
+AUTOHEAL="${BQA_AUTOPILOT_AUTOHEAL:-1}"
 
 mkdir -p "$STATUS_DIR" "$LOG_DIR"
 
@@ -55,6 +59,106 @@ is_running() {
   [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
 }
 
+file_epoch() {
+  local path="$1"
+  python3 - "$path" <<'PY'
+import os
+import sys
+
+try:
+    print(int(os.path.getmtime(sys.argv[1])))
+except OSError:
+    print(0)
+PY
+}
+
+latest_activity_epoch() {
+  local latest=0
+  local epoch=0
+  local path
+
+  for path in "$LOG_FILE" "$HISTORY_FILE"; do
+    epoch="$(file_epoch "$path")"
+    if [[ "$epoch" -gt "$latest" ]]; then
+      latest="$epoch"
+    fi
+  done
+
+  if [[ -d "$RUNS_DIR" ]]; then
+    for path in "$RUNS_DIR"/*; do
+      [[ -e "$path" ]] || continue
+      epoch="$(file_epoch "$path")"
+      if [[ "$epoch" -gt "$latest" ]]; then
+        latest="$epoch"
+      fi
+    done
+  fi
+
+  if [[ "$latest" -eq 0 ]]; then
+    latest="$(file_epoch "$PID_FILE")"
+  fi
+  echo "$latest"
+}
+
+stop_pid() {
+  local pid="$1"
+  kill -TERM "$pid" 2>/dev/null || true
+  sleep 2
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+}
+
+heal_runtime_state() {
+  if [[ ! -f "$PID_FILE" ]]; then
+    return 1
+  fi
+
+  local pid
+  pid="$(cat "$PID_FILE")"
+  if ! kill -0 "$pid" 2>/dev/null; then
+    echo "Auto-heal: removed stale autopilot PID $pid"
+    rm -f "$PID_FILE"
+    return 0
+  fi
+
+  local latest
+  latest="$(latest_activity_epoch)"
+  local now
+  now="$(date +%s)"
+  local age=$((now - latest))
+  if [[ "$latest" -gt 0 && "$age" -ge "$STALE_SECONDS" ]]; then
+    echo "Auto-heal: stale autopilot PID $pid has no activity for ${age}s; restarting"
+    stop_pid "$pid"
+    rm -f "$PID_FILE"
+    return 0
+  fi
+
+  return 1
+}
+
+ensure_config() {
+  if [[ ! -f "$CONFIG" ]]; then
+    echo "No autopilot config found: $CONFIG"
+    echo "Starting quick config wizard."
+    cd "$TARGET_REPO"
+    python3 "$ORCH" --repo "$REPO" configure-autopilot --config "$CONFIG"
+    REPO="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("repo", sys.argv[2]))' "$CONFIG" "$REPO")"
+  fi
+}
+
+start_autopilot() {
+  ensure_config
+  (
+    cd "$TARGET_REPO"
+    nohup python3 "$ORCH" --repo "$REPO" --execute autopilot --config "$CONFIG" > "$LOG_FILE" 2>&1 &
+    echo "$!" > "$PID_FILE"
+  )
+  echo "Started BQA autopilot. PID: $(cat "$PID_FILE")"
+  echo "Log: $LOG_FILE"
+  echo "Status: $STATUS_MD"
+}
+
 case "$ACTION" in
   configure)
     cd "$TARGET_REPO"
@@ -62,32 +166,30 @@ case "$ACTION" in
     ;;
 
   start)
+    if [[ "$AUTOHEAL" != "0" ]]; then
+      heal_runtime_state >/dev/null || true
+    fi
     if is_running; then
       echo "BQA autopilot is already running. PID: $(cat "$PID_FILE")"
       exit 0
     fi
-    if [[ ! -f "$CONFIG" ]]; then
-      echo "No autopilot config found: $CONFIG"
-      echo "Starting quick config wizard."
-      cd "$TARGET_REPO"
-      python3 "$ORCH" --repo "$REPO" configure-autopilot --config "$CONFIG"
-      REPO="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("repo", sys.argv[2]))' "$CONFIG" "$REPO")"
-    fi
-    (
-      cd "$TARGET_REPO"
-      nohup python3 "$ORCH" --repo "$REPO" --execute autopilot --config "$CONFIG" > "$LOG_FILE" 2>&1 &
-      echo "$!" > "$PID_FILE"
-    )
-    echo "Started BQA autopilot. PID: $(cat "$PID_FILE")"
-    echo "Log: $LOG_FILE"
-    echo "Status: $STATUS_MD"
+    start_autopilot
     ;;
 
   status)
+    healed=0
+    if [[ "$AUTOHEAL" != "0" ]]; then
+      if heal_runtime_state; then
+        healed=1
+      fi
+    fi
     if is_running; then
       echo "BQA autopilot: RUNNING pid=$(cat "$PID_FILE")"
     else
       echo "BQA autopilot: STOPPED"
+      if [[ "$healed" -eq 1 ]]; then
+        start_autopilot
+      fi
     fi
     cd "$TARGET_REPO"
     python3 "$ORCH" --repo "$REPO" --execute monitor >/dev/null
