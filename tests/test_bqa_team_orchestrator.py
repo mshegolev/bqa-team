@@ -17,6 +17,42 @@ def load_orchestrator():
 
 
 class AutopilotTests(unittest.TestCase):
+    def test_cmd_qa_truncates_long_bug_body_before_issue_create(self):
+        orchestrator = load_orchestrator()
+        created_issue_body_files = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestrator.PROMPTS_DIR = Path(tmp) / "prompts"
+            orchestrator.RUNS_DIR = Path(tmp) / "runs"
+            orchestrator.TMP_DIR = Path(tmp) / "tmp"
+            orchestrator.load_role = lambda role: "QA role"
+            orchestrator.require_tools = lambda names, execute: None
+
+            long_bug_body = "What failed:\n" + ("x" * 70000) + "\n\ntokens used\n123"
+
+            def fake_run(cmd, *, execute, capture=False, check=True):
+                if cmd[:3] == ["gh", "pr", "diff"]:
+                    return subprocess.CompletedProcess(cmd, 0, stdout="diff", stderr="")
+                if cmd[:2] == ["codex", "exec"]:
+                    out = "QA_STATUS: FAIL\nBUG_TITLE: oversized bug\nBUG_BODY:\n" + long_bug_body
+                    return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+                if cmd[:3] == ["gh", "issue", "create"]:
+                    body_file = Path(cmd[cmd.index("--body-file") + 1])
+                    created_issue_body_files.append(body_file)
+                    return subprocess.CompletedProcess(cmd, 0, stdout="https://example.test/bug\n", stderr="")
+                raise AssertionError(f"unexpected command: {cmd}")
+
+            orchestrator.run = fake_run
+            args = SimpleNamespace(repo="mshegolev/bqa-os", pr=73, execute=True)
+
+            orchestrator.cmd_qa(args)
+
+            self.assertEqual(len(created_issue_body_files), 1)
+            body = created_issue_body_files[0].read_text(encoding="utf-8")
+            self.assertLessEqual(len(body), 60000)
+            self.assertIn("What failed:", body)
+            self.assertIn("truncated", body.lower())
+
     def test_run_updates_autopilot_heartbeat_while_command_runs(self):
         orchestrator = load_orchestrator()
 
