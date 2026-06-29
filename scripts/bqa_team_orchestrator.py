@@ -36,6 +36,7 @@ STATUS_DIR = TEAM_DIR / "status"
 STATUS_JSON = STATUS_DIR / "autopilot-status.json"
 STATUS_MD = STATUS_DIR / "autopilot-status.md"
 AUTOPILOT_HISTORY = STATUS_DIR / "autopilot-history.jsonl"
+HEARTBEAT_INTERVAL_SECONDS = float(os.environ.get("BQA_AUTOPILOT_HEARTBEAT_SECONDS", "5"))
 PROJECT_VIEW_JSON = STATUS_DIR / "project-view.json"
 PROJECT_VIEW_HTML = STATUS_DIR / "project-view.html"
 AUTOPILOT_CONFIG = TEAM_DIR / "autopilot-config.json"
@@ -154,13 +155,38 @@ def log(msg: str) -> None:
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
 
 
+def touch_autopilot_heartbeat() -> None:
+    STATUS_DIR.mkdir(parents=True, exist_ok=True)
+    (STATUS_DIR / "autopilot-heartbeat").write_text(now() + "\n", encoding="utf-8")
+
+
 def run(cmd: list[str], *, execute: bool, capture: bool = False, check: bool = True) -> subprocess.CompletedProcess[str]:
     printable = " ".join(shlex.quote(c) for c in cmd)
     if not execute:
         print(f"DRY-RUN: {printable}")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
     log(f"RUN: {printable}")
-    return subprocess.run(cmd, cwd=str(ROOT), text=True, capture_output=capture, check=check)
+    touch_autopilot_heartbeat()
+    process = subprocess.Popen(
+        cmd,
+        cwd=str(ROOT),
+        text=True,
+        stdout=subprocess.PIPE if capture else None,
+        stderr=subprocess.PIPE if capture else None,
+    )
+    stdout: str | None = None
+    stderr: str | None = None
+    while True:
+        try:
+            stdout, stderr = process.communicate(timeout=HEARTBEAT_INTERVAL_SECONDS)
+            break
+        except subprocess.TimeoutExpired:
+            touch_autopilot_heartbeat()
+    touch_autopilot_heartbeat()
+    result = subprocess.CompletedProcess(cmd, process.returncode, stdout=stdout, stderr=stderr)
+    if check and process.returncode:
+        raise subprocess.CalledProcessError(process.returncode, cmd, output=stdout, stderr=stderr)
+    return result
 
 
 def read(path: Path) -> str:

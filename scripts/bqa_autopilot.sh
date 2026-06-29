@@ -6,20 +6,53 @@ if [[ $# -gt 0 ]]; then
   shift
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+DEFAULT_TEAM_REPO="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+TARGET_REPO_EXPLICIT=0
+if [[ -n "${BQA_TARGET_REPO:-}" ]]; then
+  TARGET_REPO_EXPLICIT=1
+fi
 TARGET_REPO="${BQA_TARGET_REPO:-$(pwd)}"
-TEAM_REPO="${BQA_TEAM_REPO:-/opt/develop/bqa-team}"
+TEAM_REPO="${BQA_TEAM_REPO:-$DEFAULT_TEAM_REPO}"
 REPO="${BQA_GITHUB_REPO:-mshegolev/bqa-os}"
 CONFIG=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --target-repo) TARGET_REPO="$2"; shift 2 ;;
+    --target-repo) TARGET_REPO="$2"; TARGET_REPO_EXPLICIT=1; shift 2 ;;
     --team-repo) TEAM_REPO="$2"; shift 2 ;;
     --repo) REPO="$2"; shift 2 ;;
     --config) CONFIG="$2"; shift 2 ;;
     *) echo "Unknown arg: $1" >&2; exit 2 ;;
   esac
 done
+
+canonical_dir() {
+  cd "$1" 2>/dev/null && pwd -P
+}
+
+resolve_default_target_repo() {
+  if [[ "$TARGET_REPO_EXPLICIT" -eq 1 ]]; then
+    return
+  fi
+
+  local target_abs
+  target_abs="$(canonical_dir "$TARGET_REPO" || true)"
+  local team_abs
+  team_abs="$(canonical_dir "$TEAM_REPO" || true)"
+  if [[ -z "$target_abs" || -z "$team_abs" || "$target_abs" != "$team_abs" ]]; then
+    return
+  fi
+
+  local repo_name="${REPO##*/}"
+  local sibling
+  sibling="$(canonical_dir "$team_abs/../$repo_name" || true)"
+  if [[ -n "$sibling" && -d "$sibling/.git" ]]; then
+    TARGET_REPO="$sibling"
+  fi
+}
+
+resolve_default_target_repo
 
 if [[ ! -d "$TARGET_REPO/.git" ]]; then
   echo "ERROR: target repo not found: $TARGET_REPO" >&2
@@ -42,6 +75,7 @@ PID_FILE="$STATUS_DIR/autopilot.pid"
 LOG_FILE="$LOG_DIR/autopilot.log"
 STATUS_MD="$STATUS_DIR/autopilot-status.md"
 HISTORY_FILE="$STATUS_DIR/autopilot-history.jsonl"
+HEARTBEAT_FILE="$STATUS_DIR/autopilot-heartbeat"
 STALE_SECONDS="${BQA_AUTOPILOT_STALE_SECONDS:-900}"
 AUTOHEAL="${BQA_AUTOPILOT_AUTOHEAL:-1}"
 
@@ -57,6 +91,28 @@ fi
 
 is_running() {
   [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
+}
+
+child_pids() {
+  local parent="$1"
+  ps -axo pid=,ppid= 2>/dev/null | awk -v parent="$parent" '$2 == parent { print $1 }' || true
+}
+
+has_child_process() {
+  [[ -n "$(child_pids "$1")" ]]
+}
+
+kill_process_group() {
+  local signal="$1"
+  local pid="$2"
+  python3 -c 'import os, signal, sys
+sig = int(sys.argv[1])
+pgid = int(sys.argv[2])
+try:
+    os.killpg(pgid, sig)
+except (ProcessLookupError, PermissionError):
+    pass
+' "$signal" "$pid"
 }
 
 file_epoch() {
@@ -77,7 +133,7 @@ latest_activity_epoch() {
   local epoch=0
   local path
 
-  for path in "$LOG_FILE" "$HISTORY_FILE"; do
+  for path in "$LOG_FILE" "$HISTORY_FILE" "$HEARTBEAT_FILE"; do
     epoch="$(file_epoch "$path")"
     if [[ "$epoch" -gt "$latest" ]]; then
       latest="$epoch"
@@ -102,8 +158,17 @@ latest_activity_epoch() {
 
 stop_pid() {
   local pid="$1"
+  local child
+  for child in $(child_pids "$pid"); do
+    stop_pid "$child"
+  done
+  kill_process_group 15 "$pid"
   kill -TERM "$pid" 2>/dev/null || true
   sleep 2
+  for child in $(child_pids "$pid"); do
+    stop_pid "$child"
+  done
+  kill_process_group 9 "$pid"
   if kill -0 "$pid" 2>/dev/null; then
     kill -KILL "$pid" 2>/dev/null || true
   fi
@@ -128,6 +193,9 @@ heal_runtime_state() {
   now="$(date +%s)"
   local age=$((now - latest))
   if [[ "$latest" -gt 0 && "$age" -ge "$STALE_SECONDS" ]]; then
+    if has_child_process "$pid"; then
+      return 1
+    fi
     echo "Auto-heal: stale autopilot PID $pid has no activity for ${age}s; restarting"
     stop_pid "$pid"
     rm -f "$PID_FILE"
@@ -151,7 +219,7 @@ start_autopilot() {
   ensure_config
   (
     cd "$TARGET_REPO"
-    nohup python3 "$ORCH" --repo "$REPO" --execute autopilot --config "$CONFIG" > "$LOG_FILE" 2>&1 &
+    nohup python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' python3 "$ORCH" --repo "$REPO" --execute autopilot --config "$CONFIG" > "$LOG_FILE" 2>&1 &
     echo "$!" > "$PID_FILE"
   )
   echo "Started BQA autopilot. PID: $(cat "$PID_FILE")"
@@ -191,6 +259,7 @@ case "$ACTION" in
         start_autopilot
       fi
     fi
+    echo "BQA target repo: $TARGET_REPO"
     cd "$TARGET_REPO"
     python3 "$ORCH" --repo "$REPO" --execute monitor >/dev/null
     cat "$STATUS_MD"
@@ -209,7 +278,7 @@ case "$ACTION" in
 
   stop)
     if is_running; then
-      kill -TERM "$(cat "$PID_FILE")"
+      stop_pid "$(cat "$PID_FILE")"
       echo "Stopped BQA autopilot. PID: $(cat "$PID_FILE")"
       rm -f "$PID_FILE"
     else
