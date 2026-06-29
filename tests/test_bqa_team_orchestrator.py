@@ -407,6 +407,8 @@ class AutopilotTests(unittest.TestCase):
                     "90",
                     "--repo",
                     "mshegolev/bqa-os",
+                    "--remove-label",
+                    "bqa:in-dev",
                     "--add-label",
                     "bqa:blocked",
                 ),
@@ -451,7 +453,21 @@ class AutopilotTests(unittest.TestCase):
             output = (orchestrator.RUNS_DIR / "dev_issue_91.out.txt").read_text(encoding="utf-8")
             self.assertIn("QUESTION_STATUS: OPEN", output)
             self.assertIn("go test ./... exited with status 1", output)
-            self.assertIn(("gh", "issue", "edit", "91", "--repo", "mshegolev/bqa-os", "--add-label", "bqa:blocked"), calls)
+            self.assertIn(
+                (
+                    "gh",
+                    "issue",
+                    "edit",
+                    "91",
+                    "--repo",
+                    "mshegolev/bqa-os",
+                    "--remove-label",
+                    "bqa:in-dev",
+                    "--add-label",
+                    "bqa:blocked",
+                ),
+                calls,
+            )
             self.assertNotIn(("git", "commit", "-m", "Implement issue #91: Failing tests"), calls)
             self.assertNotIn(
                 (
@@ -508,7 +524,21 @@ class AutopilotTests(unittest.TestCase):
             self.assertIn("QUESTION_STATUS: OPEN", output)
             self.assertIn("gh pr create exited with status 1", output)
             self.assertIn("GraphQL error", output)
-            self.assertIn(("gh", "issue", "edit", "92", "--repo", "mshegolev/bqa-os", "--add-label", "bqa:blocked"), calls)
+            self.assertIn(
+                (
+                    "gh",
+                    "issue",
+                    "edit",
+                    "92",
+                    "--repo",
+                    "mshegolev/bqa-os",
+                    "--remove-label",
+                    "bqa:in-dev",
+                    "--add-label",
+                    "bqa:blocked",
+                ),
+                calls,
+            )
             self.assertNotIn(
                 (
                     "gh",
@@ -784,6 +814,53 @@ class AutopilotTests(unittest.TestCase):
         self.assertNotIn(("dev", 62), events)
         self.assertNotIn(("qa", 91), events)
         self.assertIn(("business", 91), events)
+
+    def test_autopilot_cycle_removes_ready_business_when_business_requests_revision(self):
+        orchestrator = load_orchestrator()
+        label_events = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestrator.RUNS_DIR = Path(tmp) / "runs"
+
+            def fake_list_candidate_issues(repo, execute, label="bqa:ready-dev"):
+                if label == "bqa:ready-business":
+                    return [62]
+                return []
+
+            orchestrator.list_candidate_issues = fake_list_candidate_issues
+            orchestrator.issue_json = lambda repo, number, execute: json.dumps(
+                {"title": "Monday sales package", "body": "Accept it", "labels": [{"name": "bqa:ready-business"}]}
+            )
+            orchestrator.cmd_dev = lambda args: None
+            orchestrator.cmd_qa = lambda args: None
+            orchestrator.cmd_business_accept = lambda args: orchestrator.write(
+                orchestrator.RUNS_DIR / "business_accept_pr_91.out.txt",
+                "BUSINESS_STATUS: REVISE\n",
+            )
+            orchestrator.find_pr_for_branch = lambda repo, branch, execute: 91
+            orchestrator.edit_issue_labels = lambda repo, issue, *, execute, remove=None, add=None: label_events.append(
+                (repo, issue, tuple(remove or []), tuple(add or []))
+            )
+            orchestrator.run = lambda cmd, *, execute, capture=False, check=True: subprocess.CompletedProcess(
+                cmd, 0, stdout="", stderr=""
+            )
+
+            args = SimpleNamespace(
+                repo="mshegolev/bqa-os",
+                execute=True,
+                issue_label="bqa:ready-dev",
+                oldest_first=True,
+                auto_commit=True,
+                merge=True,
+                close_issue=True,
+                stop_on_fail=True,
+                branch=None,
+            )
+
+            status = orchestrator.run_autopilot_cycle(args)
+
+        self.assertEqual(status, "blocked")
+        self.assertIn(("mshegolev/bqa-os", 62, ("bqa:ready-business",), ("bqa:blocked",)), label_events)
 
     def test_autopilot_cycle_stops_before_business_acceptance_when_qa_fails(self):
         orchestrator = load_orchestrator()
@@ -1126,6 +1203,7 @@ REASON: Replaced by the install smoke test issue.
 
     def test_autopilot_cycle_records_missing_pr_stop_reason(self):
         orchestrator = load_orchestrator()
+        label_events = []
 
         with tempfile.TemporaryDirectory() as tmp:
             orchestrator.RUNS_DIR = Path(tmp) / "runs"
@@ -1143,7 +1221,9 @@ REASON: Replaced by the install smoke test issue.
                 "QUESTION_STATUS: CLOSED\n",
             )
             orchestrator.find_pr_for_branch = lambda repo, branch, execute: None
-            orchestrator.edit_issue_labels = lambda *args, **kwargs: None
+            orchestrator.edit_issue_labels = lambda repo, issue, *, execute, remove=None, add=None: label_events.append(
+                (repo, issue, tuple(remove or []), tuple(add or []))
+            )
 
             args = SimpleNamespace(
                 repo="mshegolev/bqa-os",
@@ -1164,6 +1244,10 @@ REASON: Replaced by the install smoke test issue.
             self.assertEqual(orchestrator.LAST_AUTOPILOT_CYCLE["status"], "blocked")
             self.assertEqual(orchestrator.LAST_AUTOPILOT_CYCLE["issue"], 42)
             self.assertEqual(orchestrator.LAST_AUTOPILOT_CYCLE["stop_reason"], "missing_pr")
+            self.assertIn(
+                ("mshegolev/bqa-os", 42, ("bqa:ready-qa", "bqa:ready-business"), ("bqa:blocked",)),
+                label_events,
+            )
 
     def test_run_output_has_status_ignores_prompt_instructions(self):
         orchestrator = load_orchestrator()
