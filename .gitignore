@@ -5,6 +5,10 @@
 .bqa-team/state.json
 error.log
 
+# Python runtime artifacts
+__pycache__/
+*.pyc
+
 # OS/editor
 .DS_Store
 .idea/
