@@ -1351,12 +1351,13 @@ def list_candidate_issues(repo: str, execute: bool, label: str | None = "bqa:rea
         "bqa:done",
         "bqa:business-approved",
     }
+    effective_excluded_labels = excluded_labels - ({label} if label else set())
     candidates = []
     for issue in issues:
         labels = set(label_names(issue))
         if label and label not in labels:
             continue
-        if labels & excluded_labels:
+        if labels & effective_excluded_labels:
             continue
         blocked_dependency = False
         for dep in parse_issue_dependencies(issue.get("body") or ""):
@@ -1372,7 +1373,14 @@ def list_candidate_issues(repo: str, execute: bool, label: str | None = "bqa:rea
 def run_autopilot_cycle(args: argparse.Namespace) -> str:
     set_last_autopilot_cycle({})
     issue_label = None if getattr(args, "all_open", False) else args.issue_label
+    resume_stage = "dev"
     ready = list_candidate_issues(args.repo, args.execute, issue_label)
+    if not ready and issue_label == "bqa:ready-dev":
+        for stage_label, stage in (("bqa:ready-qa", "qa"), ("bqa:ready-business", "business")):
+            ready = list_candidate_issues(args.repo, args.execute, stage_label)
+            if ready:
+                resume_stage = stage
+                break
     if not ready:
         if issue_label:
             log(f"No open issues with label {issue_label}.")
@@ -1391,19 +1399,11 @@ def run_autopilot_cycle(args: argparse.Namespace) -> str:
     title = json.loads(raw).get("title", f"issue-{issue}") if raw else f"issue-{issue}"
     branch = branch_name_for_issue(issue, title, args.branch)
 
-    route = {"subagent": getattr(args, "subagent", None), "reason": "Selected by CLI override."}
-    if not route["subagent"]:
-        route = route_issue_to_subagent(args.repo, issue, raw, args.execute)
-    if route["subagent"] not in SUBAGENT_FILES:
-        route = {"subagent": "go-cli-implementer", "reason": "Invalid CLI subagent override; using default implementer."}
-    save_subagent_route(issue, route)
-    log(f"Routed issue {issue} to subagent {route['subagent']}: {route['reason']}")
     cycle_details = {
         "issue": issue,
         "title": title,
         "branch": branch,
-        "subagent": route["subagent"],
-        "route_reason": route["reason"],
+        "resume_stage": resume_stage,
     }
 
     sync_base_branch(args)
@@ -1412,15 +1412,27 @@ def run_autopilot_cycle(args: argparse.Namespace) -> str:
     cycle_args.issue = issue
     cycle_args.branch = branch
     cycle_args.auto_commit = args.auto_commit
-    cycle_args.subagent = route["subagent"]
+    if resume_stage == "dev":
+        route = {"subagent": getattr(args, "subagent", None), "reason": "Selected by CLI override."}
+        if not route["subagent"]:
+            route = route_issue_to_subagent(args.repo, issue, raw, args.execute)
+        if route["subagent"] not in SUBAGENT_FILES:
+            route = {"subagent": "go-cli-implementer", "reason": "Invalid CLI subagent override; using default implementer."}
+        save_subagent_route(issue, route)
+        log(f"Routed issue {issue} to subagent {route['subagent']}: {route['reason']}")
+        cycle_details["subagent"] = route["subagent"]
+        cycle_details["route_reason"] = route["reason"]
+        cycle_args.subagent = route["subagent"]
 
-    log(f"Autopilot dev issue {issue} on branch {branch}")
-    cmd_dev(cycle_args)
+        log(f"Autopilot dev issue {issue} on branch {branch}")
+        cmd_dev(cycle_args)
 
-    if run_output_has_status(RUNS_DIR / f"dev_issue_{issue}.out.txt", "QUESTION_STATUS", "OPEN"):
-        log(f"Issue {issue} blocked by developer question.")
-        set_last_autopilot_cycle({**cycle_details, "status": "blocked", "stop_reason": "developer_question_open"})
-        return "blocked"
+        if run_output_has_status(RUNS_DIR / f"dev_issue_{issue}.out.txt", "QUESTION_STATUS", "OPEN"):
+            log(f"Issue {issue} blocked by developer question.")
+            set_last_autopilot_cycle({**cycle_details, "status": "blocked", "stop_reason": "developer_question_open"})
+            return "blocked"
+    else:
+        cycle_args.subagent = getattr(args, "subagent", None)
 
     pr = find_pr_for_branch(args.repo, branch, args.execute)
     if pr is None:
@@ -1432,14 +1444,15 @@ def run_autopilot_cycle(args: argparse.Namespace) -> str:
     cycle_args.pr = pr
     cycle_details["pr"] = pr
 
-    log(f"Autopilot QA PR {pr}")
-    cmd_qa(cycle_args)
-    if run_output_has_status(RUNS_DIR / f"qa_pr_{pr}.out.txt", "QA_STATUS", "FAIL"):
-        log(f"QA failed for PR {pr}.")
-        set_last_autopilot_cycle({**cycle_details, "status": "blocked", "stop_reason": "qa_failed"})
-        return "blocked"
+    if resume_stage in {"dev", "qa"}:
+        log(f"Autopilot QA PR {pr}")
+        cmd_qa(cycle_args)
+        if run_output_has_status(RUNS_DIR / f"qa_pr_{pr}.out.txt", "QA_STATUS", "FAIL"):
+            log(f"QA failed for PR {pr}.")
+            set_last_autopilot_cycle({**cycle_details, "status": "blocked", "stop_reason": "qa_failed"})
+            return "blocked"
 
-    edit_issue_labels(args.repo, issue, execute=args.execute, remove=["bqa:ready-qa"], add=["bqa:ready-business"])
+        edit_issue_labels(args.repo, issue, execute=args.execute, remove=["bqa:ready-qa"], add=["bqa:ready-business"])
 
     log(f"Autopilot business acceptance PR {pr}")
     cmd_business_accept(cycle_args)

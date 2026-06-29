@@ -158,6 +158,119 @@ class AutopilotTests(unittest.TestCase):
         )
         self.assertIn(("gh", "pr", "merge", "77", "--repo", "mshegolev/bqa-os", "--squash", "--delete-branch"), events)
 
+    def test_autopilot_cycle_resumes_ready_qa_issue_without_dev(self):
+        orchestrator = load_orchestrator()
+        events = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestrator.RUNS_DIR = Path(tmp) / "runs"
+
+            def fake_list_candidate_issues(repo, execute, label="bqa:ready-dev"):
+                if label == "bqa:ready-dev":
+                    return []
+                if label == "bqa:ready-qa":
+                    return [31]
+                return []
+
+            orchestrator.list_candidate_issues = fake_list_candidate_issues
+            orchestrator.issue_json = lambda repo, number, execute: json.dumps(
+                {"title": "Static site upload flow", "body": "Verify it", "labels": [{"name": "bqa:ready-qa"}]}
+            )
+            orchestrator.cmd_dev = lambda args: events.append(("dev", args.issue))
+
+            def fake_qa(args):
+                events.append(("qa", args.pr))
+                orchestrator.write(orchestrator.RUNS_DIR / "qa_pr_88.out.txt", "QA_STATUS: PASS\n")
+
+            def fake_business(args):
+                events.append(("business", args.pr))
+                orchestrator.write(
+                    orchestrator.RUNS_DIR / "business_accept_pr_88.out.txt",
+                    "BUSINESS_STATUS: ACCEPT\n",
+                )
+
+            def fake_find_pr(repo, branch, execute):
+                events.append(("find-pr", branch))
+                return 88
+
+            orchestrator.cmd_qa = fake_qa
+            orchestrator.cmd_business_accept = fake_business
+            orchestrator.find_pr_for_branch = fake_find_pr
+            orchestrator.run = lambda cmd, *, execute, capture=False, check=True: subprocess.CompletedProcess(
+                cmd, 0, stdout="", stderr=""
+            )
+
+            args = SimpleNamespace(
+                repo="mshegolev/bqa-os",
+                execute=True,
+                issue_label="bqa:ready-dev",
+                oldest_first=True,
+                auto_commit=True,
+                merge=True,
+                close_issue=True,
+                stop_on_fail=True,
+                branch=None,
+            )
+
+            status = orchestrator.run_autopilot_cycle(args)
+
+        self.assertEqual(status, "processed")
+        self.assertIn(("find-pr", "codex/issue-31-static-site-upload-flow"), events)
+        self.assertNotIn(("dev", 31), events)
+        self.assertIn(("qa", 88), events)
+        self.assertIn(("business", 88), events)
+
+    def test_autopilot_cycle_resumes_ready_business_issue_without_dev_or_qa(self):
+        orchestrator = load_orchestrator()
+        events = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestrator.RUNS_DIR = Path(tmp) / "runs"
+
+            def fake_list_candidate_issues(repo, execute, label="bqa:ready-dev"):
+                if label == "bqa:ready-business":
+                    return [62]
+                return []
+
+            orchestrator.list_candidate_issues = fake_list_candidate_issues
+            orchestrator.issue_json = lambda repo, number, execute: json.dumps(
+                {"title": "Monday sales package", "body": "Accept it", "labels": [{"name": "bqa:ready-business"}]}
+            )
+            orchestrator.cmd_dev = lambda args: events.append(("dev", args.issue))
+            orchestrator.cmd_qa = lambda args: events.append(("qa", args.pr))
+
+            def fake_business(args):
+                events.append(("business", args.pr))
+                orchestrator.write(
+                    orchestrator.RUNS_DIR / "business_accept_pr_91.out.txt",
+                    "BUSINESS_STATUS: ACCEPT\n",
+                )
+
+            orchestrator.cmd_business_accept = fake_business
+            orchestrator.find_pr_for_branch = lambda repo, branch, execute: 91
+            orchestrator.run = lambda cmd, *, execute, capture=False, check=True: subprocess.CompletedProcess(
+                cmd, 0, stdout="", stderr=""
+            )
+
+            args = SimpleNamespace(
+                repo="mshegolev/bqa-os",
+                execute=True,
+                issue_label="bqa:ready-dev",
+                oldest_first=True,
+                auto_commit=True,
+                merge=True,
+                close_issue=True,
+                stop_on_fail=True,
+                branch=None,
+            )
+
+            status = orchestrator.run_autopilot_cycle(args)
+
+        self.assertEqual(status, "processed")
+        self.assertNotIn(("dev", 62), events)
+        self.assertNotIn(("qa", 91), events)
+        self.assertIn(("business", 91), events)
+
     def test_autopilot_cycle_stops_before_business_acceptance_when_qa_fails(self):
         orchestrator = load_orchestrator()
         events = []
