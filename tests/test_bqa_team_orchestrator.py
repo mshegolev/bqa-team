@@ -376,6 +376,103 @@ REASON: Replaced by the install smoke test issue.
             self.assertTrue(orchestrator.STATUS_MD.exists())
             self.assertIn("Completed done: 3", orchestrator.STATUS_MD.read_text())
 
+    def test_autopilot_history_records_processed_cycle_details(self):
+        orchestrator = load_orchestrator()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestrator.STATUS_DIR = Path(tmp) / "status"
+            orchestrator.STATUS_JSON = orchestrator.STATUS_DIR / "autopilot-status.json"
+            orchestrator.STATUS_MD = orchestrator.STATUS_DIR / "autopilot-status.md"
+            orchestrator.AUTOPILOT_HISTORY = orchestrator.STATUS_DIR / "autopilot-history.jsonl"
+            orchestrator.require_tools = lambda names, execute: None
+            orchestrator.write_monitor_status = lambda repo, execute, status="unknown", processed=0: {
+                "last_cycle_status": status,
+                "processed_this_run": processed,
+            }
+            orchestrator.time.sleep = lambda seconds: None
+
+            def fake_cycle(args):
+                orchestrator.set_last_autopilot_cycle(
+                    {
+                        "status": "processed",
+                        "issue": 42,
+                        "title": "Add Widget",
+                        "branch": "codex/issue-42-add-widget",
+                        "pr": 77,
+                        "subagent": "go-cli-implementer",
+                        "route_reason": "CLI override.",
+                        "stop_reason": "completed",
+                    }
+                )
+                return "processed"
+
+            orchestrator.run_autopilot_cycle = fake_cycle
+            args = SimpleNamespace(
+                repo="mshegolev/bqa-os",
+                execute=True,
+                once=True,
+                max_cycles=1,
+                sleep_seconds=0,
+                stop_on_fail=False,
+                replan_every=0,
+            )
+
+            orchestrator.cmd_autopilot(args)
+
+            entries = [json.loads(line) for line in orchestrator.AUTOPILOT_HISTORY.read_text().splitlines()]
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0]["repo"], "mshegolev/bqa-os")
+            self.assertEqual(entries[0]["cycle"], 1)
+            self.assertEqual(entries[0]["total_cycles"], 1)
+            self.assertEqual(entries[0]["status"], "processed")
+            self.assertEqual(entries[0]["processed_this_run"], 1)
+            self.assertEqual(entries[0]["issue"], 42)
+            self.assertEqual(entries[0]["branch"], "codex/issue-42-add-widget")
+            self.assertEqual(entries[0]["pr"], 77)
+            self.assertEqual(entries[0]["subagent"], "go-cli-implementer")
+            self.assertEqual(entries[0]["stop_reason"], "completed")
+
+    def test_autopilot_cycle_records_missing_pr_stop_reason(self):
+        orchestrator = load_orchestrator()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestrator.RUNS_DIR = Path(tmp) / "runs"
+            orchestrator.list_candidate_issues = lambda repo, execute, label="bqa:ready-dev": [42]
+            orchestrator.issue_json = lambda repo, number, execute: json.dumps(
+                {"title": "Add Widget", "body": "Build it", "labels": []}
+            )
+            orchestrator.route_issue_to_subagent = lambda repo, issue, raw, execute: {
+                "subagent": "go-cli-implementer",
+                "reason": "Default route.",
+            }
+            orchestrator.sync_base_branch = lambda args: None
+            orchestrator.cmd_dev = lambda args: orchestrator.write(
+                orchestrator.RUNS_DIR / "dev_issue_42.out.txt",
+                "QUESTION_STATUS: CLOSED\n",
+            )
+            orchestrator.find_pr_for_branch = lambda repo, branch, execute: None
+            orchestrator.edit_issue_labels = lambda *args, **kwargs: None
+
+            args = SimpleNamespace(
+                repo="mshegolev/bqa-os",
+                execute=True,
+                issue_label="bqa:ready-dev",
+                oldest_first=True,
+                auto_commit=True,
+                merge=True,
+                close_issue=True,
+                stop_on_fail=False,
+                branch=None,
+                subagent=None,
+            )
+
+            status = orchestrator.run_autopilot_cycle(args)
+
+            self.assertEqual(status, "blocked")
+            self.assertEqual(orchestrator.LAST_AUTOPILOT_CYCLE["status"], "blocked")
+            self.assertEqual(orchestrator.LAST_AUTOPILOT_CYCLE["issue"], 42)
+            self.assertEqual(orchestrator.LAST_AUTOPILOT_CYCLE["stop_reason"], "missing_pr")
+
     def test_run_output_has_status_ignores_prompt_instructions(self):
         orchestrator = load_orchestrator()
 

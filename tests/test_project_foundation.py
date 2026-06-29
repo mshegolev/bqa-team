@@ -45,6 +45,7 @@ class ProjectFoundationTests(unittest.TestCase):
 
         self.assertIn("__pycache__/", content)
         self.assertIn("*.pyc", content)
+        self.assertIn(".bqa-team/status/", content)
 
 
 if __name__ == "__main__":

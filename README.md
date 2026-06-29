@@ -238,9 +238,10 @@ The wrapper uses `nohup`, writes `.bqa-team/status/autopilot.pid`, and keeps run
 ```text
 .bqa-team/status/autopilot-status.json
 .bqa-team/status/autopilot-status.md
+.bqa-team/status/autopilot-history.jsonl
 ```
 
-The status view shows open, ready, doing, blocked, and completed counts.
+The status view shows open, ready, doing, blocked, and completed counts. The history ledger is append-only JSONL: one record per autopilot cycle with status, stop reason, selected issue, branch, PR, and subagent routing metadata when available.
 
 Generate a visual issue view:
 

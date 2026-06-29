@@ -35,10 +35,12 @@ TMP_DIR = GENERATED_DIR / "tmp"
 STATUS_DIR = TEAM_DIR / "status"
 STATUS_JSON = STATUS_DIR / "autopilot-status.json"
 STATUS_MD = STATUS_DIR / "autopilot-status.md"
+AUTOPILOT_HISTORY = STATUS_DIR / "autopilot-history.jsonl"
 PROJECT_VIEW_JSON = STATUS_DIR / "project-view.json"
 PROJECT_VIEW_HTML = STATUS_DIR / "project-view.html"
 AUTOPILOT_CONFIG = TEAM_DIR / "autopilot-config.json"
 STATE_FILE = TEAM_DIR / "state.json"
+LAST_AUTOPILOT_CYCLE: dict = {}
 
 LABELS = {
     "bqa:business": "Business-originated task",
@@ -168,6 +170,12 @@ def read(path: Path) -> str:
 def write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def append(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(content)
 
 
 def slugify(text: str, max_len: int = 56) -> str:
@@ -1132,6 +1140,33 @@ def write_monitor_status(repo: str, execute: bool, last_cycle_status: str = "unk
     return snapshot
 
 
+def set_last_autopilot_cycle(details: dict) -> dict:
+    global LAST_AUTOPILOT_CYCLE
+    LAST_AUTOPILOT_CYCLE = dict(details)
+    return LAST_AUTOPILOT_CYCLE
+
+
+def append_autopilot_history(
+    args: argparse.Namespace,
+    cycle: int,
+    total_cycles: int,
+    status: str,
+    processed_this_run: int,
+) -> dict:
+    entry = {
+        "timestamp": now(),
+        "repo": args.repo,
+        "cycle": cycle,
+        "total_cycles": total_cycles,
+        "status": status,
+        "processed_this_run": processed_this_run,
+    }
+    entry.update(LAST_AUTOPILOT_CYCLE)
+    entry["status"] = status
+    append(AUTOPILOT_HISTORY, json.dumps(entry, sort_keys=True, ensure_ascii=False) + "\n")
+    return entry
+
+
 def cmd_monitor(args: argparse.Namespace) -> None:
     snapshot = write_monitor_status(args.repo, args.execute)
     print(monitor_markdown(snapshot))
@@ -1299,6 +1334,7 @@ def list_candidate_issues(repo: str, execute: bool, label: str | None = "bqa:rea
 
 
 def run_autopilot_cycle(args: argparse.Namespace) -> str:
+    set_last_autopilot_cycle({})
     issue_label = None if getattr(args, "all_open", False) else args.issue_label
     ready = list_candidate_issues(args.repo, args.execute, issue_label)
     if not ready:
@@ -1306,6 +1342,12 @@ def run_autopilot_cycle(args: argparse.Namespace) -> str:
             log(f"No open issues with label {issue_label}.")
         else:
             log("No open issues found.")
+        set_last_autopilot_cycle({
+            "status": "idle",
+            "stop_reason": "no_candidates",
+            "issue_label": issue_label,
+            "all_open": bool(getattr(args, "all_open", False)),
+        })
         return "idle"
 
     issue = ready[-1] if args.oldest_first else ready[0]
@@ -1320,6 +1362,13 @@ def run_autopilot_cycle(args: argparse.Namespace) -> str:
         route = {"subagent": "go-cli-implementer", "reason": "Invalid CLI subagent override; using default implementer."}
     save_subagent_route(issue, route)
     log(f"Routed issue {issue} to subagent {route['subagent']}: {route['reason']}")
+    cycle_details = {
+        "issue": issue,
+        "title": title,
+        "branch": branch,
+        "subagent": route["subagent"],
+        "route_reason": route["reason"],
+    }
 
     sync_base_branch(args)
 
@@ -1334,20 +1383,24 @@ def run_autopilot_cycle(args: argparse.Namespace) -> str:
 
     if run_output_has_status(RUNS_DIR / f"dev_issue_{issue}.out.txt", "QUESTION_STATUS", "OPEN"):
         log(f"Issue {issue} blocked by developer question.")
+        set_last_autopilot_cycle({**cycle_details, "status": "blocked", "stop_reason": "developer_question_open"})
         return "blocked"
 
     pr = find_pr_for_branch(args.repo, branch, args.execute)
     if pr is None:
         log(f"No open PR found for branch {branch}.")
         edit_issue_labels(args.repo, issue, execute=args.execute, add=["bqa:blocked"])
+        set_last_autopilot_cycle({**cycle_details, "status": "blocked", "stop_reason": "missing_pr"})
         return "blocked"
 
     cycle_args.pr = pr
+    cycle_details["pr"] = pr
 
     log(f"Autopilot QA PR {pr}")
     cmd_qa(cycle_args)
     if run_output_has_status(RUNS_DIR / f"qa_pr_{pr}.out.txt", "QA_STATUS", "FAIL"):
         log(f"QA failed for PR {pr}.")
+        set_last_autopilot_cycle({**cycle_details, "status": "blocked", "stop_reason": "qa_failed"})
         return "blocked"
 
     edit_issue_labels(args.repo, issue, execute=args.execute, remove=["bqa:ready-qa"], add=["bqa:ready-business"])
@@ -1357,6 +1410,7 @@ def run_autopilot_cycle(args: argparse.Namespace) -> str:
     if run_output_has_status(RUNS_DIR / f"business_accept_pr_{pr}.out.txt", "BUSINESS_STATUS", "REVISE"):
         log(f"Business requested revision for PR {pr}.")
         edit_issue_labels(args.repo, issue, execute=args.execute, add=["bqa:blocked"])
+        set_last_autopilot_cycle({**cycle_details, "status": "blocked", "stop_reason": "business_revision"})
         return "blocked"
 
     edit_issue_labels(args.repo, issue, execute=args.execute, remove=["bqa:ready-business"], add=["bqa:business-approved", "bqa:done"])
@@ -1367,6 +1421,7 @@ def run_autopilot_cycle(args: argparse.Namespace) -> str:
         close_issue(args.repo, issue, args.execute)
 
     sync_base_branch(args)
+    set_last_autopilot_cycle({**cycle_details, "status": "processed", "stop_reason": "completed"})
     return "processed"
 
 
@@ -1403,15 +1458,18 @@ def cmd_autopilot(args: argparse.Namespace) -> None:
     write_monitor_status(args.repo, args.execute, "starting", processed)
     for i in range(cycles):
         log(f"Autopilot cycle {i + 1}/{cycles}")
+        set_last_autopilot_cycle({})
         status = run_autopilot_cycle(args)
         if status == "idle":
             write_monitor_status(args.repo, args.execute, status, processed)
+            append_autopilot_history(args, i + 1, cycles, status, processed)
             break
         if status == "processed":
             processed += 1
             if args.replan_every > 0 and processed % args.replan_every == 0:
                 cmd_replan(args)
         write_monitor_status(args.repo, args.execute, status, processed)
+        append_autopilot_history(args, i + 1, cycles, status, processed)
         if status == "blocked" and args.stop_on_fail:
             break
         if args.sleep_seconds and i < cycles - 1:
