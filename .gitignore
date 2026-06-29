@@ -5,6 +5,7 @@
 .bqa-team/logs/
 .bqa-team/status/
 .bqa-team/state.json
+.remember/
 error.log
 
 # Python runtime artifacts
