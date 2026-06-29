@@ -21,6 +21,16 @@ bqa brain status
 bqa brain sync --sanitize
 ```
 
+If `bqa brain sync --sanitize` reports `unknown flag: --sanitize`, the `bqa`
+binary in `PATH` is older than the current `/opt/develop/bqa-os` checkout. Use
+the checkout directly until the local binary is rebuilt:
+
+```bash
+cd /opt/develop/bqa-os
+go run ./cmd/bqa brain sync --help
+go run ./cmd/bqa brain sync --sanitize
+```
+
 ## Unified Source Of Truth
 
 `bqa-team` owns the unified team artifact registry:
