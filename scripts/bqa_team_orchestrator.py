@@ -1152,7 +1152,7 @@ def default_autopilot_config(repo: str) -> dict:
         "vision_file": ".bqa-team/PROJECT_VISION.md",
         "issue_limit": 100,
         "base_branch": "main",
-        "stop_on_fail": True,
+        "stop_on_fail": False,
     }
 
 
@@ -1265,8 +1265,6 @@ def open_issue_snapshot(repo: str, execute: bool, label: str | None = None) -> s
 
 
 def list_candidate_issues(repo: str, execute: bool, label: str | None = "bqa:ready-dev") -> list[int]:
-    if label:
-        return list_ready_issues(repo, execute, label)
     raw = open_issue_snapshot(repo, execute, None)
     try:
         issues = json.loads(raw)
@@ -1285,6 +1283,8 @@ def list_candidate_issues(repo: str, execute: bool, label: str | None = "bqa:rea
     candidates = []
     for issue in issues:
         labels = set(label_names(issue))
+        if label and label not in labels:
+            continue
         if labels & excluded_labels:
             continue
         blocked_dependency = False
@@ -1483,6 +1483,7 @@ def build_parser() -> argparse.ArgumentParser:
     autopilot.add_argument("--issue-limit", type=int)
     autopilot.add_argument("--merge", action=argparse.BooleanOptionalAction, default=None, help="Merge accepted PRs with squash after QA and business acceptance")
     autopilot.add_argument("--close-issue", action=argparse.BooleanOptionalAction, default=None, help="Close accepted issues after QA and business acceptance")
+    autopilot.add_argument("--stop-on-fail", dest="stop_on_fail", action="store_true", help="Stop the autopilot run when a cycle reports blocked or failed")
     autopilot.add_argument("--continue-on-fail", dest="stop_on_fail", action="store_false")
     autopilot.set_defaults(stop_on_fail=None)
     autopilot.add_argument("--branch")

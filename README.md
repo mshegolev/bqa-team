@@ -231,6 +231,8 @@ Stop it:
 
 Autopilot intentionally refuses unbounded runs. Use `--once` for one issue or `--max-cycles N` for a long run.
 
+By default, a blocked issue does not stop the whole run. Autopilot skips issues labeled `bqa:blocked` and issues whose body explicitly depends on a blocked issue, then keeps processing independent work. To restore strict stop-on-blocked behavior for a run, pass `--stop-on-fail`; for a reusable config, set `stop_on_fail` to `true`.
+
 The wrapper uses `nohup`, writes `.bqa-team/status/autopilot.pid`, and keeps running after the terminal is closed. The monitor writes:
 
 ```text

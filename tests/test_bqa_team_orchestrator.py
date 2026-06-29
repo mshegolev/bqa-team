@@ -24,7 +24,7 @@ class AutopilotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             orchestrator.RUNS_DIR = Path(tmp) / "runs"
 
-            orchestrator.list_ready_issues = lambda repo, execute, label="bqa:ready-dev": [42]
+            orchestrator.list_candidate_issues = lambda repo, execute, label="bqa:ready-dev": [42]
             orchestrator.issue_json = lambda repo, number, execute: json.dumps(
                 {"title": "Add Widget", "body": "Build it", "labels": []}
             )
@@ -108,7 +108,7 @@ class AutopilotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             orchestrator.RUNS_DIR = Path(tmp) / "runs"
 
-            orchestrator.list_ready_issues = lambda repo, execute, label="bqa:ready-dev": [7]
+            orchestrator.list_candidate_issues = lambda repo, execute, label="bqa:ready-dev": [7]
             orchestrator.issue_json = lambda repo, number, execute: json.dumps(
                 {"title": "Broken Feature", "body": "Build it", "labels": []}
             )
@@ -151,7 +151,7 @@ class AutopilotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             orchestrator.RUNS_DIR = Path(tmp) / "runs"
 
-            orchestrator.list_ready_issues = lambda repo, execute, label="bqa:ready-dev": [21]
+            orchestrator.list_candidate_issues = lambda repo, execute, label="bqa:ready-dev": [21]
             orchestrator.issue_json = lambda repo, number, execute: json.dumps(
                 {"title": "Improve landing page", "body": "Update UI copy and layout.", "labels": []}
             )
@@ -247,6 +247,13 @@ REASON: Replaced by the install smoke test issue.
         self.assertIn(("replan", "mshegolev/bqa-os"), events)
         self.assertIn(("monitor", "processed", 2), events)
 
+    def test_autopilot_parser_supports_stop_on_fail_override(self):
+        orchestrator = load_orchestrator()
+
+        args = orchestrator.build_parser().parse_args(["--repo", "mshegolev/bqa-os", "autopilot", "--stop-on-fail"])
+
+        self.assertTrue(args.stop_on_fail)
+
     def test_list_ready_issues_can_list_all_open_issues_without_label_filter(self):
         orchestrator = load_orchestrator()
         calls = []
@@ -278,6 +285,22 @@ REASON: Replaced by the install smoke test issue.
         issues = orchestrator.list_candidate_issues("mshegolev/bqa-os", True, None)
 
         self.assertEqual(issues, [1, 6])
+
+    def test_candidate_issues_skip_blocked_dependencies_with_label_filter(self):
+        orchestrator = load_orchestrator()
+        payload = [
+            {"number": 1, "body": "", "state": "OPEN", "labels": [{"name": "bqa:ready-dev"}]},
+            {"number": 2, "body": "", "state": "OPEN", "labels": [{"name": "bqa:blocked"}]},
+            {"number": 3, "body": "Depends on #2", "state": "OPEN", "labels": [{"name": "bqa:ready-dev"}]},
+            {"number": 4, "body": "Depends on #1", "state": "OPEN", "labels": [{"name": "bqa:ready-dev"}]},
+            {"number": 5, "body": "", "state": "OPEN", "labels": [{"name": "bqa:ready-qa"}]},
+        ]
+
+        orchestrator.open_issue_snapshot = lambda repo, execute, label=None: json.dumps(payload)
+
+        issues = orchestrator.list_candidate_issues("mshegolev/bqa-os", True, "bqa:ready-dev")
+
+        self.assertEqual(issues, [1, 4])
 
     def test_checkout_issue_branch_uses_existing_local_branch(self):
         orchestrator = load_orchestrator()
@@ -476,6 +499,7 @@ REASON: Replaced by the install smoke test issue.
             self.assertEqual(saved["max_cycles"], 200)
             self.assertTrue(saved["all_open"])
             self.assertEqual(saved["replan_every"], 7)
+            self.assertFalse(saved["stop_on_fail"])
 
     def test_apply_autopilot_config_fills_missing_args(self):
         orchestrator = load_orchestrator()
