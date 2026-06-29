@@ -1458,10 +1458,23 @@ def run_autopilot_cycle(args: argparse.Namespace) -> str:
         cmd_qa(cycle_args)
         if run_output_has_status(RUNS_DIR / f"qa_pr_{pr}.out.txt", "QA_STATUS", "FAIL"):
             log(f"QA failed for PR {pr}.")
+            edit_issue_labels(
+                args.repo,
+                issue,
+                execute=args.execute,
+                remove=["bqa:ready-qa"],
+                add=["bqa:qa-failed", "bqa:blocked"],
+            )
             set_last_autopilot_cycle({**cycle_details, "status": "blocked", "stop_reason": "qa_failed"})
             return "blocked"
 
-        edit_issue_labels(args.repo, issue, execute=args.execute, remove=["bqa:ready-qa"], add=["bqa:ready-business"])
+        edit_issue_labels(
+            args.repo,
+            issue,
+            execute=args.execute,
+            remove=["bqa:ready-qa", "bqa:qa-failed", "bqa:blocked"],
+            add=["bqa:ready-business"],
+        )
 
     log(f"Autopilot business acceptance PR {pr}")
     cmd_business_accept(cycle_args)
