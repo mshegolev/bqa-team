@@ -76,6 +76,8 @@ LOG_FILE="$LOG_DIR/autopilot.log"
 STATUS_MD="$STATUS_DIR/autopilot-status.md"
 HISTORY_FILE="$STATUS_DIR/autopilot-history.jsonl"
 HEARTBEAT_FILE="$STATUS_DIR/autopilot-heartbeat"
+START_EXIT_FILE="$STATUS_DIR/autopilot-start-exit"
+START_LAUNCHED_FILE="$STATUS_DIR/autopilot-start-launched"
 STALE_SECONDS="${BQA_AUTOPILOT_STALE_SECONDS:-900}"
 AUTOHEAL="${BQA_AUTOPILOT_AUTOHEAL:-1}"
 START_RETRIES="${BQA_AUTOPILOT_START_RETRIES:-1}"
@@ -220,18 +222,52 @@ ensure_config() {
 launch_autopilot_once() {
   local old_pwd="$PWD"
   cd "$TARGET_REPO"
+  rm -f "$START_EXIT_FILE" "$START_LAUNCHED_FILE"
   # -u keeps stdout/stderr unbuffered so autopilot.log reflects live
   # activity; without it Python block-buffers and the log looks empty,
   # which also misleads the auto-heal staleness detector.
-  nohup python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' python3 -u "$ORCH" --repo "$REPO" --execute autopilot --config "$CONFIG" > "$LOG_FILE" 2>&1 &
+  nohup python3 -c 'import os, subprocess, sys
+exit_file = sys.argv[1]
+launched_file = sys.argv[2]
+cmd = sys.argv[3:]
+status = 127
+try:
+    os.setsid()
+    with open(launched_file, "w", encoding="utf-8") as fh:
+        fh.write(str(os.getpid()))
+    status = subprocess.call(cmd)
+except BaseException:
+    raise
+finally:
+    with open(exit_file, "w", encoding="utf-8") as fh:
+        fh.write(str(status))
+sys.exit(status)
+' "$START_EXIT_FILE" "$START_LAUNCHED_FILE" python3 -u "$ORCH" --repo "$REPO" --execute autopilot --config "$CONFIG" > "$LOG_FILE" 2>&1 &
   LAST_LAUNCHED_PID="$!"
   echo "$LAST_LAUNCHED_PID" > "$PID_FILE"
   cd "$old_pwd"
 }
 
+wait_for_launch_probe() {
+  python3 - "$START_EXIT_FILE" "$START_LAUNCHED_FILE" "$STARTUP_GRACE_SECONDS" <<'PY'
+import pathlib
+import sys
+import time
+
+exit_file = pathlib.Path(sys.argv[1])
+launched_file = pathlib.Path(sys.argv[2])
+deadline = time.monotonic() + float(sys.argv[3])
+
+while time.monotonic() < deadline:
+    if exit_file.exists() or launched_file.exists():
+        raise SystemExit(0)
+    time.sleep(0.05)
+PY
+}
+
 launched_job_is_running() {
   local pid="$1"
-  jobs -pr | awk -v pid="$pid" '$1 == pid { found = 1 } END { exit found ? 0 : 1 }'
+  [[ ! -f "$START_EXIT_FILE" ]] && kill -0 "$pid" 2>/dev/null
 }
 
 start_autopilot() {
@@ -241,6 +277,7 @@ start_autopilot() {
   local max_attempts=$((START_RETRIES + 1))
   while [[ "$attempt" -le "$max_attempts" ]]; do
     launch_autopilot_once
+    wait_for_launch_probe
     sleep "$STARTUP_GRACE_SECONDS"
 
     if launched_job_is_running "$LAST_LAUNCHED_PID"; then

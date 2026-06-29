@@ -47,7 +47,12 @@ class BQAAutopilotWrapperTests(unittest.TestCase):
             self.addCleanup(self._stop_process, stale_process)
             (status_dir / "autopilot.pid").write_text(f"{stale_process.pid}\n", encoding="utf-8")
 
-            result = self._run_wrapper("status", target_repo, team_repo, {"BQA_AUTOPILOT_STALE_SECONDS": "1"})
+            result = self._run_wrapper(
+                "status",
+                target_repo,
+                team_repo,
+                {"BQA_AUTOPILOT_STALE_SECONDS": "1", "BQA_AUTOPILOT_STARTUP_GRACE_SECONDS": "0.1"},
+            )
 
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("Auto-heal: stale autopilot PID", result.stdout)
@@ -147,7 +152,7 @@ class BQAAutopilotWrapperTests(unittest.TestCase):
                 "start",
                 target_repo,
                 team_repo,
-                {"BQA_AUTOPILOT_START_RETRIES": "1", "BQA_AUTOPILOT_STARTUP_GRACE_SECONDS": "2"},
+                {"BQA_AUTOPILOT_START_RETRIES": "1", "BQA_AUTOPILOT_STARTUP_GRACE_SECONDS": "6"},
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -241,7 +246,7 @@ else:
             text=True,
             capture_output=True,
             env=full_env,
-            timeout=10,
+            timeout=40,
         )
 
     def _run_wrapper_from_cwd(self, action: str, cwd: Path, team_repo: Path):
@@ -258,7 +263,7 @@ else:
             text=True,
             capture_output=True,
             cwd=cwd,
-            timeout=10,
+            timeout=40,
         )
 
     def _stop_pid(self, pid: int) -> None:
