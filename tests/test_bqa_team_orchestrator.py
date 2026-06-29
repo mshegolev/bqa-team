@@ -17,6 +17,27 @@ def load_orchestrator():
 
 
 class AutopilotTests(unittest.TestCase):
+    def test_run_updates_autopilot_heartbeat_while_command_runs(self):
+        orchestrator = load_orchestrator()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestrator.STATUS_DIR = Path(tmp) / "status"
+            orchestrator.HEARTBEAT_INTERVAL_SECONDS = 0.05
+
+            result = orchestrator.run(
+                [
+                    "python3",
+                    "-c",
+                    "import time; time.sleep(0.15); print('ok')",
+                ],
+                execute=True,
+                capture=True,
+            )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(result.stdout.strip(), "ok")
+            self.assertTrue((orchestrator.STATUS_DIR / "autopilot-heartbeat").exists())
+
     def test_autopilot_cycle_runs_dev_qa_business_acceptance_and_marks_done(self):
         orchestrator = load_orchestrator()
         events = []
