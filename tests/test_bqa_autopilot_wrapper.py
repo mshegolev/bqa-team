@@ -137,7 +137,31 @@ class BQAAutopilotWrapperTests(unittest.TestCase):
             self.assertIn(f"BQA target repo: {target_repo.resolve()}", result.stdout)
             self.assertIn(f"BQA autopilot: RUNNING pid={os.getpid()}", result.stdout)
 
-    def _make_fake_runtime(self, tmp_path: Path) -> tuple[Path, Path]:
+    def test_start_retries_when_first_autopilot_process_exits_immediately(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            target_repo, team_repo = self._make_fake_runtime(tmp_path, fail_first_autopilot_start=True)
+            pid_file = target_repo / ".bqa-team" / "status" / "autopilot.pid"
+
+            result = self._run_wrapper(
+                "start",
+                target_repo,
+                team_repo,
+                {"BQA_AUTOPILOT_START_RETRIES": "1", "BQA_AUTOPILOT_STARTUP_GRACE_SECONDS": "2"},
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Autopilot start attempt 1 exited immediately; retrying", result.stdout)
+            pid = int(pid_file.read_text(encoding="utf-8").strip())
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                self.fail(f"start returned stale PID {pid}")
+            attempt_file = target_repo / ".bqa-team" / "status" / "start-attempts"
+            self.assertEqual("2", attempt_file.read_text(encoding="utf-8").strip())
+            self._stop_pid(pid)
+
+    def _make_fake_runtime(self, tmp_path: Path, *, fail_first_autopilot_start: bool = False) -> tuple[Path, Path]:
         target_repo = tmp_path / "bqa-os"
         team_repo = tmp_path / "bqa-team"
         (target_repo / ".git").mkdir(parents=True)
@@ -149,8 +173,34 @@ class BQAAutopilotWrapperTests(unittest.TestCase):
         scripts_dir = team_repo / "scripts"
         scripts_dir.mkdir(parents=True)
         orchestrator = scripts_dir / "bqa_team_orchestrator.py"
-        orchestrator.write_text(
-            """#!/usr/bin/env python3
+        if fail_first_autopilot_start:
+            orchestrator_body = """#!/usr/bin/env python3
+import pathlib
+import sys
+import time
+
+root = pathlib.Path.cwd()
+status_dir = root / ".bqa-team" / "status"
+status_dir.mkdir(parents=True, exist_ok=True)
+attempt_file = status_dir / "start-attempts"
+
+if "monitor" in sys.argv:
+    (status_dir / "autopilot-status.md").write_text("# Fake status\\n", encoding="utf-8")
+elif "autopilot" in sys.argv:
+    attempts = int(attempt_file.read_text(encoding="utf-8")) if attempt_file.exists() else 0
+    attempts += 1
+    attempt_file.write_text(str(attempts), encoding="utf-8")
+    if attempts == 1:
+        raise SystemExit(17)
+    (status_dir / "autopilot-history.jsonl").write_text('{"status":"started"}\\n', encoding="utf-8")
+    time.sleep(60)
+elif "configure-autopilot" in sys.argv:
+    pass
+else:
+    raise SystemExit(f"unexpected args: {sys.argv}")
+"""
+        else:
+            orchestrator_body = """#!/usr/bin/env python3
 import pathlib
 import sys
 import time
@@ -168,9 +218,8 @@ elif "configure-autopilot" in sys.argv:
     pass
 else:
     raise SystemExit(f"unexpected args: {sys.argv}")
-""",
-            encoding="utf-8",
-        )
+"""
+        orchestrator.write_text(orchestrator_body, encoding="utf-8")
         orchestrator.chmod(0o755)
         return target_repo, team_repo
 
