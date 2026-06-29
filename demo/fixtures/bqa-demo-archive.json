@@ -1,0 +1,116 @@
+{
+  "manifest": {
+    "archive_type": "bqa-demo",
+    "name": "bqa_synthetic_archive_v1.0.0",
+    "version": "1.0.0",
+    "created_at": "2026-06-29T00:00:00Z",
+    "synthetic": true,
+    "privacy": "synthetic-only",
+    "description": "Synthetic BQA archive for local browser demo flows."
+  },
+  "sessions": [
+    {
+      "id": "session-demo-001",
+      "title": "Synthetic checkout regression triage",
+      "source": "synthetic",
+      "summary": "Agent identified missing validation around checkout event normalization.",
+      "artifacts": ["agent-data-ingestion", "workflow-regression-loop", "spec-checkout-normalization"]
+    },
+    {
+      "id": "session-demo-002",
+      "title": "Synthetic release readiness review",
+      "source": "synthetic",
+      "summary": "Agent converted release notes into QA checks and handoff notes.",
+      "artifacts": ["agent-release-qa", "workflow-release-gate", "knowledge-release-readiness"]
+    }
+  ],
+  "agents": [
+    {
+      "id": "agent-data-ingestion",
+      "name": "DataIngestionAgent",
+      "role": "Ingestion",
+      "domain": "Data",
+      "version": "1.0.0",
+      "status": "OK",
+      "description": "Discovers input files, validates schemas, and normalizes synthetic source records."
+    },
+    {
+      "id": "agent-release-qa",
+      "name": "ReleaseQAAssistant",
+      "role": "QA",
+      "domain": "Release",
+      "version": "1.0.0",
+      "status": "OK",
+      "description": "Builds release verification checklists from synthetic release notes."
+    },
+    {
+      "id": "agent-drift-guard",
+      "name": "DriftGuard",
+      "role": "Safety",
+      "domain": "Governance",
+      "version": "1.0.0",
+      "status": "OK",
+      "description": "Compares current work against acceptance criteria and warns on scope drift."
+    }
+  ],
+  "workflows": [
+    {
+      "id": "workflow-regression-loop",
+      "name": "Regression Triage Loop",
+      "steps": ["Load synthetic session", "Extract expected checks", "Generate QA task", "Verify result"],
+      "owner": "ReleaseQAAssistant",
+      "status": "Ready"
+    },
+    {
+      "id": "workflow-release-gate",
+      "name": "Release Gate Review",
+      "steps": ["Review change summary", "Map affected checks", "Collect evidence", "Prepare approval note"],
+      "owner": "DriftGuard",
+      "status": "Ready"
+    }
+  ],
+  "specs": [
+    {
+      "id": "spec-checkout-normalization",
+      "title": "Checkout Normalization Spec",
+      "type": "QA Spec",
+      "status": "Ready",
+      "acceptance": ["Input schema is explicit", "Output records are normalized", "Missing fields are reported"]
+    },
+    {
+      "id": "spec-demo-upload",
+      "title": "Demo Upload Flow Spec",
+      "type": "Product Spec",
+      "status": "Ready",
+      "acceptance": ["Archive is parsed locally", "Artifacts are displayed", "Result can be downloaded"]
+    }
+  ],
+  "knowledge": [
+    {
+      "id": "knowledge-release-readiness",
+      "title": "Release Readiness Pattern",
+      "category": "Pattern",
+      "content": "Convert change notes into checks, evidence links, and explicit approval criteria."
+    },
+    {
+      "id": "knowledge-synthetic-data",
+      "title": "Synthetic Data Rule",
+      "category": "Safety",
+      "content": "Demo fixtures use invented identifiers, fake sessions, and public-safe examples only."
+    }
+  ],
+  "recommendations": [
+    {
+      "id": "recommendation-add-smoke",
+      "title": "Add install smoke coverage",
+      "priority": "High",
+      "body": "Run the installer in a temporary repository before long autopilot runs."
+    },
+    {
+      "id": "recommendation-demo-script",
+      "title": "Prepare demo script",
+      "priority": "Medium",
+      "body": "Use the synthetic archive to show upload, validation, artifact review, and result download."
+    }
+  ]
+}

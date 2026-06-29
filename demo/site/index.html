@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>BQA Demo Archive</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>BQA Demo Archive</h1>
+        <span>Local only</span>
+      </div>
+      <button id="clear-session" class="button ghost" type="button">Clear session</button>
+    </header>
+
+    <main class="app-shell">
+      <aside class="panel upload-panel">
+        <section>
+          <h2>Upload synthetic archive</h2>
+          <label class="drop-zone" for="archive-input">
+            <span class="upload-icon" aria-hidden="true">Upload</span>
+            <strong>Choose JSON archive</strong>
+            <small>Browser-only parsing. No backend service.</small>
+          </label>
+          <input id="archive-input" type="file" accept="application/json,.json">
+          <button id="load-sample" class="button secondary" type="button">Load bundled sample</button>
+          <p class="fixture-note">Fixture: <code>../fixtures/bqa-demo-archive.json</code></p>
+        </section>
+
+        <section class="validation-card">
+          <div class="status-heading">
+            <span id="validation-dot" class="status-dot"></span>
+            <div>
+              <h2 id="validation-title">Archive validated</h2>
+              <p id="validation-message">Load an archive to validate required sections.</p>
+            </div>
+          </div>
+          <ul id="validation-list" class="check-list"></ul>
+        </section>
+      </aside>
+
+      <section class="workspace">
+        <nav class="tabs" aria-label="Artifact categories">
+          <button class="tab active" type="button" data-section="agents">Agents</button>
+          <button class="tab" type="button" data-section="workflows">Workflows</button>
+          <button class="tab" type="button" data-section="specs">Specs</button>
+          <button class="tab" type="button" data-section="knowledge">Knowledge</button>
+          <button class="tab" type="button" data-section="recommendations">Recommendations</button>
+        </nav>
+
+        <div class="workspace-header">
+          <div>
+            <h2 id="section-title">Agents</h2>
+            <p id="section-subtitle">Generated agents discovered in the archive.</p>
+          </div>
+          <input id="artifact-search" class="search" type="search" placeholder="Search artifacts">
+        </div>
+
+        <div class="artifact-layout">
+          <div id="artifact-list" class="artifact-list"></div>
+          <article id="artifact-detail" class="artifact-detail">
+            <h3>Select an artifact</h3>
+            <p>Load the bundled sample or upload a matching JSON archive.</p>
+          </article>
+        </div>
+      </section>
+
+      <aside class="panel summary-panel">
+        <section>
+          <h2>Summary</h2>
+          <p class="muted">Overall status</p>
+          <div class="summary-status">
+            <span class="status-dot"></span>
+            <strong>Archive validated</strong>
+          </div>
+          <dl id="summary-counts" class="summary-counts"></dl>
+        </section>
+
+        <section>
+          <h2>Archive details</h2>
+          <dl id="archive-details" class="archive-details"></dl>
+        </section>
+
+        <section class="actions">
+          <button id="download-result" class="button primary" type="button">Download result</button>
+          <a class="button ghost" href="../fixtures/bqa-demo-archive.json" download>Download sample JSON</a>
+        </section>
+      </aside>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
