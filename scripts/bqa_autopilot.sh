@@ -78,6 +78,8 @@ HISTORY_FILE="$STATUS_DIR/autopilot-history.jsonl"
 HEARTBEAT_FILE="$STATUS_DIR/autopilot-heartbeat"
 STALE_SECONDS="${BQA_AUTOPILOT_STALE_SECONDS:-900}"
 AUTOHEAL="${BQA_AUTOPILOT_AUTOHEAL:-1}"
+START_RETRIES="${BQA_AUTOPILOT_START_RETRIES:-1}"
+STARTUP_GRACE_SECONDS="${BQA_AUTOPILOT_STARTUP_GRACE_SECONDS:-1}"
 
 mkdir -p "$STATUS_DIR" "$LOG_DIR"
 
@@ -215,19 +217,48 @@ ensure_config() {
   fi
 }
 
+launch_autopilot_once() {
+  local old_pwd="$PWD"
+  cd "$TARGET_REPO"
+  # -u keeps stdout/stderr unbuffered so autopilot.log reflects live
+  # activity; without it Python block-buffers and the log looks empty,
+  # which also misleads the auto-heal staleness detector.
+  nohup python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' python3 -u "$ORCH" --repo "$REPO" --execute autopilot --config "$CONFIG" > "$LOG_FILE" 2>&1 &
+  LAST_LAUNCHED_PID="$!"
+  echo "$LAST_LAUNCHED_PID" > "$PID_FILE"
+  cd "$old_pwd"
+}
+
+launched_job_is_running() {
+  local pid="$1"
+  jobs -pr | awk -v pid="$pid" '$1 == pid { found = 1 } END { exit found ? 0 : 1 }'
+}
+
 start_autopilot() {
   ensure_config
-  (
-    cd "$TARGET_REPO"
-    # -u keeps stdout/stderr unbuffered so autopilot.log reflects live
-    # activity; without it Python block-buffers and the log looks empty,
-    # which also misleads the auto-heal staleness detector.
-    nohup python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' python3 -u "$ORCH" --repo "$REPO" --execute autopilot --config "$CONFIG" > "$LOG_FILE" 2>&1 &
-    echo "$!" > "$PID_FILE"
-  )
-  echo "Started BQA autopilot. PID: $(cat "$PID_FILE")"
-  echo "Log: $LOG_FILE"
-  echo "Status: $STATUS_MD"
+
+  local attempt=1
+  local max_attempts=$((START_RETRIES + 1))
+  while [[ "$attempt" -le "$max_attempts" ]]; do
+    launch_autopilot_once
+    sleep "$STARTUP_GRACE_SECONDS"
+
+    if launched_job_is_running "$LAST_LAUNCHED_PID"; then
+      echo "Started BQA autopilot. PID: $(cat "$PID_FILE")"
+      echo "Log: $LOG_FILE"
+      echo "Status: $STATUS_MD"
+      return 0
+    fi
+
+    rm -f "$PID_FILE"
+    if [[ "$attempt" -lt "$max_attempts" ]]; then
+      echo "Autopilot start attempt $attempt exited immediately; retrying"
+    else
+      echo "ERROR: autopilot failed to stay running after $attempt attempt(s). See log: $LOG_FILE" >&2
+      return 1
+    fi
+    attempt=$((attempt + 1))
+  done
 }
 
 case "$ACTION" in
