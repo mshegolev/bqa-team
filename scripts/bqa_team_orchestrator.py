@@ -817,7 +817,8 @@ def run_output_contains(path: Path, marker: str) -> bool:
 def run_output_has_status(path: Path, key: str, value: str) -> bool:
     if not path.exists():
         return False
-    content = re.sub(r"(?ms)^```[^\n]*\n.*?^```", "", read(path))
+    content = re.split(r"(?m)^Reading additional input from stdin\.\.\.\s*$", read(path), maxsplit=1)[0]
+    content = re.sub(r"(?ms)^```[^\n]*\n.*?^```", "", content)
     pattern = re.compile(rf"^\s*{re.escape(key)}\s*:\s*{re.escape(value)}\b", re.MULTILINE)
     return bool(pattern.search(content))
 

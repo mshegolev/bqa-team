@@ -672,6 +672,25 @@ REASON: Replaced by the install smoke test issue.
 
             self.assertFalse(orchestrator.run_output_has_status(output, "QUESTION_STATUS", "OPEN"))
 
+    def test_run_output_has_status_ignores_prompt_echo_after_stdin_marker(self):
+        orchestrator = load_orchestrator()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "dev_issue.out.txt"
+            output.write_text(
+                "Implemented feature successfully.\n"
+                "\n"
+                "Reading additional input from stdin...\n"
+                "OpenAI Codex v0.142.0\n"
+                "--------\n"
+                "user\n"
+                "If blocked or requirements are ambiguous, output:\n"
+                "QUESTION_STATUS: OPEN\n"
+                "QUESTION_TYPE: architecture | product | qa | implementation\n"
+            )
+
+            self.assertFalse(orchestrator.run_output_has_status(output, "QUESTION_STATUS", "OPEN"))
+
     def test_run_output_has_status_detects_explicit_status_line(self):
         orchestrator = load_orchestrator()
 
