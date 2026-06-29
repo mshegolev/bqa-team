@@ -142,6 +142,22 @@ bqa:ready-dev
 python3 scripts/bqa_team_orchestrator.py --repo mshegolev/bqa-os --execute business-accept --pr <PR_NUMBER>
 ```
 
+## Run the static demo archive app
+
+Open the browser-only demo directly:
+
+```text
+demo/site/index.html
+```
+
+The bundled synthetic archive lives at:
+
+```text
+demo/fixtures/bqa-demo-archive.json
+```
+
+The demo parses JSON locally in the browser, renders generated BQA artifacts, and downloads a generated result JSON. It does not require a backend service.
+
 ## Run autopilot across GitHub issues
 
 Autopilot processes open GitHub issues with `bqa:ready-dev` one at a time:

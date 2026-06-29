@@ -1,5 +1,6 @@
 # Local runtime artifacts
 .bqa/
+.serena/
 .bqa-team/generated/
 .bqa-team/logs/
 .bqa-team/state.json
