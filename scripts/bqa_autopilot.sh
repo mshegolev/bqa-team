@@ -219,7 +219,10 @@ start_autopilot() {
   ensure_config
   (
     cd "$TARGET_REPO"
-    nohup python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' python3 "$ORCH" --repo "$REPO" --execute autopilot --config "$CONFIG" > "$LOG_FILE" 2>&1 &
+    # -u keeps stdout/stderr unbuffered so autopilot.log reflects live
+    # activity; without it Python block-buffers and the log looks empty,
+    # which also misleads the auto-heal staleness detector.
+    nohup python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' python3 -u "$ORCH" --repo "$REPO" --execute autopilot --config "$CONFIG" > "$LOG_FILE" 2>&1 &
     echo "$!" > "$PID_FILE"
   )
   echo "Started BQA autopilot. PID: $(cat "$PID_FILE")"
