@@ -142,6 +142,126 @@ bqa:ready-dev
 python3 scripts/bqa_team_orchestrator.py --repo mshegolev/bqa-os --execute business-accept --pr <PR_NUMBER>
 ```
 
+## Run autopilot across GitHub issues
+
+Autopilot processes open GitHub issues with `bqa:ready-dev` one at a time:
+
+```text
+bqa:ready-dev issue
+  -> subagent routing
+  -> developer role
+  -> commit, push, PR
+  -> QA role
+  -> business acceptance role
+  -> optional PR merge and issue close
+```
+
+Prepare the target repo:
+
+```bash
+cd /opt/develop/bqa-os
+
+gh auth status
+codex --version
+git status --short
+
+python3 ../bqa-team/scripts/bqa_team_orchestrator.py \
+  --repo mshegolev/bqa-os \
+  --execute ensure-labels
+```
+
+Run a bounded long cycle:
+
+```bash
+mkdir -p .bqa-team/logs
+
+nohup python3 ../bqa-team/scripts/bqa_team_orchestrator.py \
+  --repo mshegolev/bqa-os \
+  --execute \
+  autopilot \
+  --max-cycles 200 \
+  --sleep-seconds 60 \
+  --all-open \
+  --oldest-first \
+  --base-branch main \
+  --merge \
+  --close-issue \
+  --replan-every 7 \
+  --vision-file .bqa-team/PROJECT_VISION.md \
+  > .bqa-team/logs/autopilot.log 2>&1 &
+```
+
+Or create a reusable config once and run it through the wrapper:
+
+```bash
+cd /opt/develop/bqa-os
+
+../bqa-team/scripts/bqa_autopilot.sh configure
+../bqa-team/scripts/bqa_autopilot.sh start
+```
+
+Watch it:
+
+```bash
+../bqa-team/scripts/bqa_autopilot.sh status
+../bqa-team/scripts/bqa_autopilot.sh logs
+```
+
+Stop it:
+
+```bash
+../bqa-team/scripts/bqa_autopilot.sh stop
+```
+
+Autopilot intentionally refuses unbounded runs. Use `--once` for one issue or `--max-cycles N` for a long run.
+
+The wrapper uses `nohup`, writes `.bqa-team/status/autopilot.pid`, and keeps running after the terminal is closed. The monitor writes:
+
+```text
+.bqa-team/status/autopilot-status.json
+.bqa-team/status/autopilot-status.md
+```
+
+The status view shows open, ready, doing, blocked, and completed counts.
+
+Before each issue is executed, autopilot asks the router to choose exactly one subagent from the role catalog, for example `go-cli-implementer`, `senior-go-ai-engineer`, `designer-frontend`, `devsecops-guard`, or `qa-test-engineer`. The routing decision is saved in:
+
+```text
+.bqa-team/generated/runs/route_issue_<ISSUE_NUMBER>.json
+```
+
+To force one subagent for a controlled run:
+
+```bash
+python3 ../bqa-team/scripts/bqa_team_orchestrator.py \
+  --repo mshegolev/bqa-os \
+  --execute \
+  autopilot \
+  --once \
+  --all-open \
+  --subagent senior-go-ai-engineer
+```
+
+## Replan GitHub issues
+
+Replanning reviews the current open issue backlog against the project vision. It can create missing `bqa:ready-dev` issues and close obsolete issues with the `bqa:cancelled` label.
+
+Store the project vision in the target repo:
+
+```bash
+cat > .bqa-team/PROJECT_VISION.md
+```
+
+Run replanning directly:
+
+```bash
+python3 ../bqa-team/scripts/bqa_team_orchestrator.py \
+  --repo mshegolev/bqa-os \
+  --execute \
+  replan \
+  --vision-file .bqa-team/PROJECT_VISION.md
+```
+
 ## Safe weekend run
 
 Do not start with an unlimited loop. Run bounded batches:

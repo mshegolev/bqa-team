@@ -13,6 +13,7 @@ fi
 mkdir -p "$TARGET_DIR/scripts" "$TARGET_DIR/.bqa-team"
 
 for script in \
+  bqa_autopilot.sh \
   bqa_team_orchestrator.py \
   bqa_question.sh \
   bqa_validate_etl_pack.sh \
@@ -36,6 +37,7 @@ if ! find "$TARGET_DIR/.bqa-team/backlog" -type f -name '*.md' | grep -q .; then
 fi
 
 echo "BQA Team installed into: $TARGET_DIR"
+echo "Autopilot: scripts/bqa_autopilot.sh start|status|logs|stop"
 echo "Self-heal: scripts/bqa_selfheal_etl_pack.sh"
 echo "Validate: scripts/bqa_validate_etl_pack.sh"
 echo "Guard: scripts/bqa_agent_guard.sh"

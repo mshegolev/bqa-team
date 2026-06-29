@@ -18,6 +18,7 @@ import re
 import shlex
 import subprocess
 import time
+from copy import copy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -31,6 +32,10 @@ ISSUES_DIR = GENERATED_DIR / "issues"
 PROMPTS_DIR = GENERATED_DIR / "prompts"
 RUNS_DIR = GENERATED_DIR / "runs"
 TMP_DIR = GENERATED_DIR / "tmp"
+STATUS_DIR = TEAM_DIR / "status"
+STATUS_JSON = STATUS_DIR / "autopilot-status.json"
+STATUS_MD = STATUS_DIR / "autopilot-status.md"
+AUTOPILOT_CONFIG = TEAM_DIR / "autopilot-config.json"
 STATE_FILE = TEAM_DIR / "state.json"
 
 LABELS = {
@@ -45,6 +50,7 @@ LABELS = {
     "bqa:ready-business": "Ready for business acceptance",
     "bqa:business-approved": "Accepted by business owner",
     "bqa:done": "Done",
+    "bqa:cancelled": "Cancelled by replanning because it is no longer relevant",
     "bqa:static-site": "Static web application work",
     "bqa:game-ui": "Game-style team visualization work",
     "bqa:codex-team": "Codex team automation work",
@@ -63,6 +69,21 @@ ROLE_FILES = {
     "qa": "BQA_OS_QA_Test_Engineer.md",
     "designer": "Designer_Frontend.md",
     "devroom": "BQA_OS_Dev_Room.md",
+}
+
+SUBAGENT_FILES = {
+    "go-cli-implementer": "BQA_OS_Go_CLI_Implementer.md",
+    "senior-go-ai-engineer": "Senior_Go_AI_Engineer.md",
+    "tech-lead-architect": "BQA_OS_Tech_Lead_Architect.md",
+    "qa-test-engineer": "BQA_OS_QA_Test_Engineer.md",
+    "designer-frontend": "Designer_Frontend.md",
+    "devsecops-guard": "DevSecOps_Guard.md",
+    "agent-safety-drift-guard": "Agent_Safety_Drift_Guard.md",
+    "devrel-content-community": "DevRel_Content_Community.md",
+    "founder-product-sales-implementation": "Founder_Product_Sales_Implementation.md",
+    "solutions-engineer-implementation": "Solutions_Engineer_Implementation.md",
+    "pilot-manager": "Pilot_Manager.md",
+    "qa-domain-advisor": "QA_Domain_Advisor.md",
 }
 
 ISSUE_TEMPLATE = """## Context
@@ -180,8 +201,16 @@ def load_role(role: str) -> str:
     return read(path)
 
 
+def load_subagent(subagent: str) -> str:
+    filename = SUBAGENT_FILES.get(subagent, SUBAGENT_FILES["go-cli-implementer"])
+    path = ROLES_DIR / filename
+    if not path.exists():
+        return load_role("developer")
+    return read(path)
+
+
 def cmd_init(args: argparse.Namespace) -> None:
-    for d in [ROLES_DIR, BACKLOG_DIR, ISSUES_DIR, PROMPTS_DIR, RUNS_DIR, TMP_DIR]:
+    for d in [ROLES_DIR, BACKLOG_DIR, ISSUES_DIR, PROMPTS_DIR, RUNS_DIR, TMP_DIR, STATUS_DIR]:
         d.mkdir(parents=True, exist_ok=True)
     if not STATE_FILE.exists():
         save_state(load_state())
@@ -370,8 +399,70 @@ def issue_json(repo: str, number: int, execute: bool) -> str:
     return result.stdout if execute else json.dumps({"title": f"Issue {number}", "body": "DRY-RUN", "labels": []}, indent=2)
 
 
-def dev_prompt(raw_issue_json: str, repo: str) -> str:
-    developer = load_role("developer")
+def subagent_catalog() -> str:
+    return "\n".join(f"- {name}: {filename}" for name, filename in sorted(SUBAGENT_FILES.items()))
+
+
+def parse_subagent_decision(text: str) -> dict:
+    json_match = re.search(r"\{.*?\}", text, re.S)
+    if json_match:
+        try:
+            data = json.loads(json_match.group(0))
+            subagent = str(data.get("subagent", "")).strip()
+            if subagent in SUBAGENT_FILES:
+                return {"subagent": subagent, "reason": str(data.get("reason", "")).strip() or "Selected by router."}
+        except json.JSONDecodeError:
+            pass
+
+    match = re.search(r"^SUBAGENT:\s*([a-z0-9-]+)\s*$", text, re.M)
+    if match and match.group(1) in SUBAGENT_FILES:
+        reason_match = re.search(r"^REASON:\s*(.+)$", text, re.M)
+        return {
+            "subagent": match.group(1),
+            "reason": reason_match.group(1).strip() if reason_match else "Selected by router.",
+        }
+
+    return {"subagent": "go-cli-implementer", "reason": "Router output was missing or invalid; using default implementer."}
+
+
+def route_issue_to_subagent(repo: str, issue: int, raw_issue_json: str, execute: bool) -> dict:
+    prompt = f"""
+You are the BQA Team Router.
+
+Choose exactly one subagent to execute GitHub issue #{issue} in `{repo}`.
+
+Available subagents:
+
+{subagent_catalog()}
+
+Issue JSON:
+
+{raw_issue_json}
+
+Rules:
+- Return one and only one subagent key from the catalog.
+- Prefer `go-cli-implementer` for normal Go CLI/runtime work.
+- Prefer `senior-go-ai-engineer` for complex AI/runtime architecture implementation.
+- Prefer `designer-frontend` for UI, static site, layout, and frontend implementation.
+- Prefer `devsecops-guard` for security, scanning, guardrail, and compliance tasks.
+- Prefer `qa-test-engineer` or `qa-domain-advisor` only when the issue is primarily test/QA design.
+- Do not return a team, only a single subagent key.
+
+Return strict JSON:
+{{"subagent":"<key>","reason":"<short reason>"}}
+""".strip()
+    if not execute:
+        return {"subagent": "go-cli-implementer", "reason": "Dry run default."}
+    result = run(["codex", "exec", prompt], execute=True, capture=True, check=False)
+    return parse_subagent_decision(result.stdout + "\n" + result.stderr)
+
+
+def save_subagent_route(issue: int, route: dict) -> None:
+    write(RUNS_DIR / f"route_issue_{issue}.json", json.dumps(route, indent=2, ensure_ascii=False) + "\n")
+
+
+def dev_prompt(raw_issue_json: str, repo: str, subagent: str = "go-cli-implementer") -> str:
+    developer = load_subagent(subagent)
     architect = load_role("architect")[:6000]
     return f"""
 {developer}
@@ -385,6 +476,8 @@ Architectural constraints:
 ---
 
 Implement the following GitHub issue from `{repo}`.
+
+Selected subagent: {subagent}
 
 Issue JSON:
 
@@ -412,7 +505,8 @@ def cmd_dev(args: argparse.Namespace) -> None:
     raw = issue_json(args.repo, args.issue, args.execute)
     title = json.loads(raw).get("title", f"issue-{args.issue}") if raw else f"issue-{args.issue}"
     branch = args.branch or f"codex/issue-{args.issue}-{slugify(title, 32)}"
-    prompt = dev_prompt(raw, args.repo)
+    subagent = getattr(args, "subagent", None) or "go-cli-implementer"
+    prompt = dev_prompt(raw, args.repo, subagent)
     write(PROMPTS_DIR / f"dev_issue_{args.issue}.md", prompt)
 
     run(["git", "checkout", "-b", branch], execute=args.execute, check=False)
@@ -432,7 +526,10 @@ def cmd_dev(args: argparse.Namespace) -> None:
         run(["git", "commit", "-m", f"Implement issue #{args.issue}: {title}"], execute=args.execute, check=False)
         run(["git", "push", "-u", "origin", branch], execute=args.execute, check=False)
         body = f"Implements #{args.issue}.\n\nGenerated by BQA Team Orchestrator.\n\nChecklist:\n- [ ] go test ./... passes\n- [ ] QA review pending\n- [ ] Business acceptance pending\n"
-        run(["gh", "pr", "create", "--repo", args.repo, "--title", f"Implement #{args.issue}: {title}", "--body", body], execute=args.execute, check=False)
+        pr_cmd = ["gh", "pr", "create", "--repo", args.repo, "--title", f"Implement #{args.issue}: {title}", "--body", body]
+        if getattr(args, "base_branch", None):
+            pr_cmd += ["--base", args.base_branch]
+        run(pr_cmd, execute=args.execute, check=False)
     run(["gh", "issue", "edit", str(args.issue), "--repo", args.repo, "--remove-label", "bqa:in-dev", "--add-label", "bqa:ready-qa"], execute=args.execute, check=False)
 
 
@@ -518,10 +615,367 @@ def cmd_business_accept(args: argparse.Namespace) -> None:
     write(RUNS_DIR / f"business_accept_pr_{args.pr}.out.txt", out)
 
 
-def list_ready_issues(repo: str, execute: bool, label: str = "bqa:ready-dev") -> list[int]:
+def issue_snapshot(repo: str, execute: bool, limit: int = 100) -> str:
+    if not execute:
+        return "[]"
+    result = run([
+        "gh", "issue", "list",
+        "--repo", repo,
+        "--state", "open",
+        "--limit", str(limit),
+        "--json", "number,title,body,labels,url",
+        "--jq", ".",
+    ], execute=True, capture=True, check=False)
+    return result.stdout
+
+
+def vision_text(path: str | None) -> str:
+    if path:
+        vision_path = Path(path)
+    else:
+        vision_path = TEAM_DIR / "PROJECT_VISION.md"
+    if vision_path.exists():
+        return read(vision_path)
+    return "No explicit project vision file found. Use the repository goals and open issue context."
+
+
+def replan_prompt(repo: str, issues_json: str, vision: str) -> str:
+    business = load_role("business")
+    architect = load_role("architect")[:6000]
+    return f"""
+{business}
+
+---
+
+Technical architecture context:
+
+{architect}
+
+---
+
+Replan the open GitHub issue backlog for `{repo}`.
+
+Project vision:
+
+{vision}
+
+Open issues JSON:
+
+{issues_json}
+
+Goals:
+- Keep the backlog aligned with the project vision.
+- Create missing implementation-ready tasks when the current backlog has gaps.
+- Cancel only issues that are clearly obsolete, duplicated, or contradicted by the current vision.
+- Do not cancel tasks just because they are hard.
+- Do not include private data, secrets, or real session logs.
+- New tasks must be small and ready for the developer role.
+
+Return zero or more action blocks:
+
+---CREATE_ISSUE---
+TITLE: <short title>
+LABELS: bqa:ready-dev,<optional labels>
+BODY:
+<full issue body>
+---END_CREATE_ISSUE---
+
+---CANCEL_ISSUE---
+NUMBER: <issue number>
+REASON: <short reason>
+---END_CANCEL_ISSUE---
+""".strip()
+
+
+def parse_replan_actions(text: str) -> dict:
+    create = []
+    cancel = []
+
+    for block in re.findall(r"---CREATE_ISSUE---(.*?)---END_CREATE_ISSUE---", text, re.S):
+        title_match = re.search(r"^TITLE:\s*(.+)$", block, re.M)
+        labels_match = re.search(r"^LABELS:\s*(.+)$", block, re.M)
+        body_match = re.search(r"^BODY:\s*(.*)", block, re.M | re.S)
+        if not title_match or not body_match:
+            continue
+        labels = []
+        if labels_match:
+            labels = [x.strip() for x in labels_match.group(1).split(",") if x.strip()]
+        create.append({
+            "title": title_match.group(1).strip(),
+            "labels": labels,
+            "body": body_match.group(1).strip(),
+        })
+
+    for block in re.findall(r"---CANCEL_ISSUE---(.*?)---END_CANCEL_ISSUE---", text, re.S):
+        number_match = re.search(r"^NUMBER:\s*(\d+)$", block, re.M)
+        reason_match = re.search(r"^REASON:\s*(.+)$", block, re.M)
+        if not number_match:
+            continue
+        cancel.append({
+            "number": int(number_match.group(1)),
+            "reason": reason_match.group(1).strip() if reason_match else "Cancelled by BQA replanning.",
+        })
+
+    return {"create": create, "cancel": cancel}
+
+
+def apply_replan_actions(repo: str, actions: dict, execute: bool) -> None:
+    for issue in actions["create"]:
+        body_file = TMP_DIR / f"replan_{slugify(issue['title'])}.md"
+        write(body_file, issue["body"])
+        cmd = ["gh", "issue", "create", "--repo", repo, "--title", issue["title"], "--body-file", str(body_file)]
+        labels = issue["labels"] or ["bqa:ready-dev"]
+        for label in labels:
+            cmd += ["--label", label]
+        run(cmd, execute=execute, check=False)
+
+    for issue in actions["cancel"]:
+        edit_issue_labels(repo, issue["number"], execute=execute, add=["bqa:cancelled"])
+        run([
+            "gh", "issue", "close", str(issue["number"]),
+            "--repo", repo,
+            "--comment", f"Cancelled by BQA replanning: {issue['reason']}",
+        ], execute=execute, check=False)
+
+
+def cmd_replan(args: argparse.Namespace) -> None:
+    require_tools(["gh", "codex"], args.execute)
+    issues = issue_snapshot(args.repo, args.execute, args.issue_limit)
+    prompt = replan_prompt(args.repo, issues, vision_text(args.vision_file))
+    prompt_path = PROMPTS_DIR / f"replan_{datetime.now().strftime('%Y%m%d-%H%M%S')}.md"
+    write(prompt_path, prompt)
+
+    if args.execute:
+        result = run(["codex", "exec", prompt], execute=True, capture=True, check=False)
+        out = result.stdout + "\n" + result.stderr
+    else:
+        out = ""
+        print(f"DRY-RUN: replan prompt written to {prompt_path}")
+
+    output_path = RUNS_DIR / f"replan_{datetime.now().strftime('%Y%m%d-%H%M%S')}.out.txt"
+    write(output_path, out)
+    actions = parse_replan_actions(out)
+    apply_replan_actions(args.repo, actions, args.execute)
+    log(f"Replan actions: create={len(actions['create'])}, cancel={len(actions['cancel'])}")
+
+
+def branch_name_for_issue(issue: int, title: str, branch_override: str | None = None) -> str:
+    if branch_override:
+        return branch_override
+    return f"codex/issue-{issue}-{slugify(title, 32)}"
+
+
+def run_output_contains(path: Path, marker: str) -> bool:
+    return path.exists() and marker in read(path)
+
+
+def find_pr_for_branch(repo: str, branch: str, execute: bool) -> int | None:
+    result = run([
+        "gh", "pr", "list",
+        "--repo", repo,
+        "--head", branch,
+        "--state", "open",
+        "--json", "number",
+        "--jq", ".[0].number",
+    ], execute=execute, capture=True, check=False)
+    if not execute:
+        return None
+    try:
+        return int(result.stdout.strip())
+    except ValueError:
+        return None
+
+
+def edit_issue_labels(repo: str, issue: int, *, execute: bool, remove: list[str] | None = None, add: list[str] | None = None) -> None:
+    cmd = ["gh", "issue", "edit", str(issue), "--repo", repo]
+    for label in remove or []:
+        cmd += ["--remove-label", label]
+    for label in add or []:
+        cmd += ["--add-label", label]
+    run(cmd, execute=execute, check=False)
+
+
+def merge_pr(repo: str, pr: int, execute: bool) -> None:
+    run(["gh", "pr", "merge", str(pr), "--repo", repo, "--squash", "--delete-branch"], execute=execute, check=False)
+
+
+def close_issue(repo: str, issue: int, execute: bool) -> None:
+    run([
+        "gh", "issue", "close", str(issue),
+        "--repo", repo,
+        "--comment", "Completed by BQA autopilot after QA and business acceptance.",
+    ], execute=execute, check=False)
+
+
+def issue_count(repo: str, execute: bool, *, state: str = "open", label: str | None = None) -> int:
+    if not execute:
+        return 0
+    cmd = [
+        "gh", "issue", "list",
+        "--repo", repo,
+        "--state", state,
+        "--limit", "1000",
+        "--json", "number",
+        "--jq", "length",
+    ]
+    if label:
+        cmd += ["--label", label]
+    result = run(cmd, execute=True, capture=True, check=False)
+    try:
+        return int(result.stdout.strip())
+    except ValueError:
+        return 0
+
+
+def monitor_snapshot(repo: str, execute: bool) -> dict:
+    in_dev = issue_count(repo, execute, label="bqa:in-dev")
+    ready_qa = issue_count(repo, execute, label="bqa:ready-qa")
+    ready_business = issue_count(repo, execute, label="bqa:ready-business")
+    return {
+        "repo": repo,
+        "updated_at": now(),
+        "issues": {
+            "open_total": issue_count(repo, execute),
+            "ready_dev": issue_count(repo, execute, label="bqa:ready-dev"),
+            "doing": in_dev + ready_qa + ready_business,
+            "in_dev": in_dev,
+            "ready_qa": ready_qa,
+            "ready_business": ready_business,
+            "blocked": issue_count(repo, execute, label="bqa:blocked"),
+            "completed_done": issue_count(repo, execute, state="closed", label="bqa:done"),
+        },
+    }
+
+
+def monitor_markdown(snapshot: dict) -> str:
+    issues = snapshot["issues"]
+    return f"""# BQA Autopilot Status
+
+Updated: {snapshot['updated_at']}
+Repo: {snapshot['repo']}
+Last cycle status: {snapshot.get('last_cycle_status', 'unknown')}
+Processed this run: {snapshot.get('processed_this_run', 0)}
+
+## Issue counts
+
+- Open total: {issues['open_total']}
+- Ready dev: {issues['ready_dev']}
+- Doing: {issues['doing']}
+- In dev: {issues['in_dev']}
+- Ready QA: {issues['ready_qa']}
+- Ready business: {issues['ready_business']}
+- Blocked: {issues['blocked']}
+- Completed done: {issues['completed_done']}
+"""
+
+
+def write_monitor_status(repo: str, execute: bool, last_cycle_status: str = "unknown", processed_this_run: int = 0) -> dict:
+    snapshot = monitor_snapshot(repo, execute)
+    snapshot["last_cycle_status"] = last_cycle_status
+    snapshot["processed_this_run"] = processed_this_run
+    write(STATUS_JSON, json.dumps(snapshot, indent=2, ensure_ascii=False) + "\n")
+    write(STATUS_MD, monitor_markdown(snapshot))
+    return snapshot
+
+
+def cmd_monitor(args: argparse.Namespace) -> None:
+    snapshot = write_monitor_status(args.repo, args.execute)
+    print(monitor_markdown(snapshot))
+
+
+def default_autopilot_config(repo: str) -> dict:
+    return {
+        "repo": repo,
+        "max_cycles": 200,
+        "sleep_seconds": 60,
+        "all_open": True,
+        "issue_label": "bqa:ready-dev",
+        "oldest_first": True,
+        "auto_commit": True,
+        "merge": True,
+        "close_issue": True,
+        "replan_every": 7,
+        "vision_file": ".bqa-team/PROJECT_VISION.md",
+        "issue_limit": 100,
+        "base_branch": "main",
+        "stop_on_fail": True,
+    }
+
+
+def write_default_autopilot_config(path: Path, repo: str) -> dict:
+    config = default_autopilot_config(repo)
+    write(path, json.dumps(config, indent=2, ensure_ascii=False) + "\n")
+    return config
+
+
+def prompt_config_value(name: str, default: object) -> object:
+    answer = input(f"{name} [{default}]: ").strip()
+    if answer == "":
+        return default
+    if isinstance(default, bool):
+        return answer.lower() in {"1", "yes", "y", "true", "on"}
+    if isinstance(default, int):
+        return int(answer)
+    return answer
+
+
+def cmd_configure_autopilot(args: argparse.Namespace) -> None:
+    config_path = Path(args.config)
+    config = default_autopilot_config(args.repo)
+    if not args.yes:
+        for key in list(config):
+            config[key] = prompt_config_value(key, config[key])
+    write(config_path, json.dumps(config, indent=2, ensure_ascii=False) + "\n")
+    print(f"Autopilot config written: {config_path}")
+
+
+def load_autopilot_config(path: str | None) -> dict:
+    config_path = Path(path) if path else AUTOPILOT_CONFIG
+    if not config_path.exists():
+        return {}
+    return json.loads(read(config_path))
+
+
+def apply_autopilot_config(args: argparse.Namespace) -> argparse.Namespace:
+    config = load_autopilot_config(getattr(args, "config", None))
+    if not config:
+        return args
+    for key, value in config.items():
+        current = getattr(args, key, None)
+        if key == "repo" or current is None:
+            setattr(args, key, value)
+    return args
+
+
+def apply_autopilot_defaults(args: argparse.Namespace) -> argparse.Namespace:
+    defaults = default_autopilot_config(args.repo)
+    for key, value in defaults.items():
+        if getattr(args, key, None) is None:
+            setattr(args, key, value)
+    if getattr(args, "once", None) is None:
+        args.once = False
+    if getattr(args, "branch", None) is None:
+        args.branch = None
+    if getattr(args, "subagent", None) is None:
+        args.subagent = None
+    return args
+
+
+def sync_base_branch(args: argparse.Namespace) -> None:
+    base_branch = getattr(args, "base_branch", None)
+    if not base_branch:
+        return
+    run(["git", "checkout", base_branch], execute=args.execute, check=False)
+    run(["git", "pull", "--ff-only"], execute=args.execute, check=False)
+
+
+def list_ready_issues(repo: str, execute: bool, label: str | None = "bqa:ready-dev") -> list[int]:
     if not execute:
         return []
-    result = run(["gh", "issue", "list", "--repo", repo, "--label", label, "--state", "open", "--json", "number", "--jq", ".[].number"], execute=True, capture=True, check=False)
+    cmd = ["gh", "issue", "list", "--repo", repo, "--state", "open", "--json", "number", "--jq", ".[].number"]
+    if label:
+        cmd += ["--label", label]
+    result = run(cmd, execute=True, capture=True, check=False)
     nums = []
     for line in result.stdout.splitlines():
         try:
@@ -529,6 +983,78 @@ def list_ready_issues(repo: str, execute: bool, label: str = "bqa:ready-dev") ->
         except ValueError:
             pass
     return nums
+
+
+def run_autopilot_cycle(args: argparse.Namespace) -> str:
+    issue_label = None if getattr(args, "all_open", False) else args.issue_label
+    ready = list_ready_issues(args.repo, args.execute, issue_label)
+    if not ready:
+        if issue_label:
+            log(f"No open issues with label {issue_label}.")
+        else:
+            log("No open issues found.")
+        return "idle"
+
+    issue = ready[-1] if args.oldest_first else ready[0]
+    raw = issue_json(args.repo, issue, args.execute)
+    title = json.loads(raw).get("title", f"issue-{issue}") if raw else f"issue-{issue}"
+    branch = branch_name_for_issue(issue, title, args.branch)
+
+    route = {"subagent": getattr(args, "subagent", None), "reason": "Selected by CLI override."}
+    if not route["subagent"]:
+        route = route_issue_to_subagent(args.repo, issue, raw, args.execute)
+    if route["subagent"] not in SUBAGENT_FILES:
+        route = {"subagent": "go-cli-implementer", "reason": "Invalid CLI subagent override; using default implementer."}
+    save_subagent_route(issue, route)
+    log(f"Routed issue {issue} to subagent {route['subagent']}: {route['reason']}")
+
+    sync_base_branch(args)
+
+    cycle_args = copy(args)
+    cycle_args.issue = issue
+    cycle_args.branch = branch
+    cycle_args.auto_commit = args.auto_commit
+    cycle_args.subagent = route["subagent"]
+
+    log(f"Autopilot dev issue {issue} on branch {branch}")
+    cmd_dev(cycle_args)
+
+    if run_output_contains(RUNS_DIR / f"dev_issue_{issue}.out.txt", "QUESTION_STATUS: OPEN"):
+        log(f"Issue {issue} blocked by developer question.")
+        return "blocked"
+
+    pr = find_pr_for_branch(args.repo, branch, args.execute)
+    if pr is None:
+        log(f"No open PR found for branch {branch}.")
+        edit_issue_labels(args.repo, issue, execute=args.execute, add=["bqa:blocked"])
+        return "blocked"
+
+    cycle_args.pr = pr
+
+    log(f"Autopilot QA PR {pr}")
+    cmd_qa(cycle_args)
+    if run_output_contains(RUNS_DIR / f"qa_pr_{pr}.out.txt", "QA_STATUS: FAIL"):
+        log(f"QA failed for PR {pr}.")
+        return "blocked"
+
+    edit_issue_labels(args.repo, issue, execute=args.execute, remove=["bqa:ready-qa"], add=["bqa:ready-business"])
+
+    log(f"Autopilot business acceptance PR {pr}")
+    cmd_business_accept(cycle_args)
+    if run_output_contains(RUNS_DIR / f"business_accept_pr_{pr}.out.txt", "BUSINESS_STATUS: REVISE"):
+        log(f"Business requested revision for PR {pr}.")
+        edit_issue_labels(args.repo, issue, execute=args.execute, add=["bqa:blocked"])
+        return "blocked"
+
+    edit_issue_labels(args.repo, issue, execute=args.execute, remove=["bqa:ready-business"], add=["bqa:business-approved", "bqa:done"])
+
+    if args.merge:
+        merge_pr(args.repo, pr, args.execute)
+    if args.close_issue:
+        close_issue(args.repo, issue, args.execute)
+
+    sync_base_branch(args)
+    return "processed"
 
 
 def cmd_loop(args: argparse.Namespace) -> None:
@@ -553,6 +1079,32 @@ def cmd_loop(args: argparse.Namespace) -> None:
             time.sleep(args.sleep_seconds)
 
 
+def cmd_autopilot(args: argparse.Namespace) -> None:
+    apply_autopilot_config(args)
+    apply_autopilot_defaults(args)
+    require_tools(["gh", "git", "codex"], args.execute)
+    if not args.once and args.max_cycles <= 0:
+        raise SystemExit("Refusing unbounded autopilot. Use --once or --max-cycles N.")
+    cycles = 1 if args.once else args.max_cycles
+    processed = 0
+    write_monitor_status(args.repo, args.execute, "starting", processed)
+    for i in range(cycles):
+        log(f"Autopilot cycle {i + 1}/{cycles}")
+        status = run_autopilot_cycle(args)
+        if status == "idle":
+            write_monitor_status(args.repo, args.execute, status, processed)
+            break
+        if status == "processed":
+            processed += 1
+            if args.replan_every > 0 and processed % args.replan_every == 0:
+                cmd_replan(args)
+        write_monitor_status(args.repo, args.execute, status, processed)
+        if status == "blocked" and args.stop_on_fail:
+            break
+        if args.sleep_seconds and i < cycles - 1:
+            time.sleep(args.sleep_seconds)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="BQA team role orchestrator")
     p.add_argument("--repo", default=os.environ.get("BQA_REPO", "mshegolev/bqa-os"), help="GitHub repo, e.g. mshegolev/bqa-os")
@@ -562,6 +1114,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("init")
     sub.add_parser("seed")
     sub.add_parser("ensure-labels")
+    sub.add_parser("monitor")
+
+    configure = sub.add_parser("configure-autopilot")
+    configure.add_argument("--config", default=str(AUTOPILOT_CONFIG))
+    configure.add_argument("--yes", action="store_true", help="Write recommended defaults without interactive questions")
 
     arch = sub.add_parser("architect")
     arch.add_argument("--force", action="store_true")
@@ -572,6 +1129,8 @@ def build_parser() -> argparse.ArgumentParser:
     dev = sub.add_parser("dev")
     dev.add_argument("--issue", type=int, required=True)
     dev.add_argument("--branch")
+    dev.add_argument("--base-branch")
+    dev.add_argument("--subagent", choices=sorted(SUBAGENT_FILES))
     dev.add_argument("--auto-commit", action="store_true", help="Commit, push and open PR after Codex run")
 
     qa = sub.add_parser("qa")
@@ -579,6 +1138,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     ba = sub.add_parser("business-accept")
     ba.add_argument("--pr", type=int, required=True)
+
+    replan = sub.add_parser("replan")
+    replan.add_argument("--vision-file")
+    replan.add_argument("--issue-limit", type=int, default=100)
 
     loop = sub.add_parser("loop")
     loop.add_argument("--once", action="store_true")
@@ -590,6 +1153,27 @@ def build_parser() -> argparse.ArgumentParser:
     loop.add_argument("--auto-commit", action="store_true", help="Passed to dev when --run-dev is enabled")
     loop.add_argument("--branch")
 
+    autopilot = sub.add_parser("autopilot")
+    autopilot.add_argument("--config", default=str(AUTOPILOT_CONFIG))
+    autopilot.add_argument("--once", action="store_true", default=None)
+    autopilot.add_argument("--max-cycles", type=int)
+    autopilot.add_argument("--sleep-seconds", type=int)
+    autopilot.add_argument("--issue-label", default="bqa:ready-dev")
+    autopilot.add_argument("--all-open", action=argparse.BooleanOptionalAction, default=None, help="Process all open issues instead of filtering by --issue-label")
+    autopilot.add_argument("--oldest-first", action=argparse.BooleanOptionalAction, default=None)
+    autopilot.add_argument("--no-auto-commit", dest="auto_commit", action="store_false")
+    autopilot.set_defaults(auto_commit=None)
+    autopilot.add_argument("--replan-every", type=int)
+    autopilot.add_argument("--vision-file")
+    autopilot.add_argument("--issue-limit", type=int)
+    autopilot.add_argument("--merge", action=argparse.BooleanOptionalAction, default=None, help="Merge accepted PRs with squash after QA and business acceptance")
+    autopilot.add_argument("--close-issue", action=argparse.BooleanOptionalAction, default=None, help="Close accepted issues after QA and business acceptance")
+    autopilot.add_argument("--continue-on-fail", dest="stop_on_fail", action="store_false")
+    autopilot.set_defaults(stop_on_fail=None)
+    autopilot.add_argument("--branch")
+    autopilot.add_argument("--base-branch")
+    autopilot.add_argument("--subagent", choices=sorted(SUBAGENT_FILES), help="Override router and force one subagent for every issue")
+
     return p
 
 
@@ -599,12 +1183,16 @@ def main() -> None:
         "init": cmd_init,
         "seed": cmd_seed,
         "ensure-labels": cmd_ensure_labels,
+        "monitor": cmd_monitor,
+        "configure-autopilot": cmd_configure_autopilot,
         "architect": cmd_architect,
         "create-issues": cmd_create_issues,
         "dev": cmd_dev,
         "qa": cmd_qa,
         "business-accept": cmd_business_accept,
+        "replan": cmd_replan,
         "loop": cmd_loop,
+        "autopilot": cmd_autopilot,
     }
     handlers[args.cmd](args)
 
