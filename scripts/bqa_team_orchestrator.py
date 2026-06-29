@@ -517,7 +517,7 @@ def cmd_dev(args: argparse.Namespace) -> None:
     if args.execute:
         out = result.stdout + "\n" + result.stderr
         write(RUNS_DIR / f"dev_issue_{args.issue}.out.txt", out)
-        if "QUESTION_STATUS: OPEN" in out:
+        if re.search(r"^\s*QUESTION_STATUS\s*:\s*OPEN\b", out, re.MULTILINE):
             run(["gh", "issue", "edit", str(args.issue), "--repo", args.repo, "--add-label", "bqa:blocked"], execute=True, check=False)
             log("Developer raised an open question. See run output before continuing.")
             return
@@ -769,6 +769,13 @@ def branch_name_for_issue(issue: int, title: str, branch_override: str | None = 
 
 def run_output_contains(path: Path, marker: str) -> bool:
     return path.exists() and marker in read(path)
+
+
+def run_output_has_status(path: Path, key: str, value: str) -> bool:
+    if not path.exists():
+        return False
+    pattern = re.compile(rf"^\s*{re.escape(key)}\s*:\s*{re.escape(value)}\b", re.MULTILINE)
+    return bool(pattern.search(read(path)))
 
 
 def find_pr_for_branch(repo: str, branch: str, execute: bool) -> int | None:
@@ -1266,7 +1273,7 @@ def run_autopilot_cycle(args: argparse.Namespace) -> str:
     log(f"Autopilot dev issue {issue} on branch {branch}")
     cmd_dev(cycle_args)
 
-    if run_output_contains(RUNS_DIR / f"dev_issue_{issue}.out.txt", "QUESTION_STATUS: OPEN"):
+    if run_output_has_status(RUNS_DIR / f"dev_issue_{issue}.out.txt", "QUESTION_STATUS", "OPEN"):
         log(f"Issue {issue} blocked by developer question.")
         return "blocked"
 
@@ -1280,7 +1287,7 @@ def run_autopilot_cycle(args: argparse.Namespace) -> str:
 
     log(f"Autopilot QA PR {pr}")
     cmd_qa(cycle_args)
-    if run_output_contains(RUNS_DIR / f"qa_pr_{pr}.out.txt", "QA_STATUS: FAIL"):
+    if run_output_has_status(RUNS_DIR / f"qa_pr_{pr}.out.txt", "QA_STATUS", "FAIL"):
         log(f"QA failed for PR {pr}.")
         return "blocked"
 
@@ -1288,7 +1295,7 @@ def run_autopilot_cycle(args: argparse.Namespace) -> str:
 
     log(f"Autopilot business acceptance PR {pr}")
     cmd_business_accept(cycle_args)
-    if run_output_contains(RUNS_DIR / f"business_accept_pr_{pr}.out.txt", "BUSINESS_STATUS: REVISE"):
+    if run_output_has_status(RUNS_DIR / f"business_accept_pr_{pr}.out.txt", "BUSINESS_STATUS", "REVISE"):
         log(f"Business requested revision for PR {pr}.")
         edit_issue_labels(args.repo, issue, execute=args.execute, add=["bqa:blocked"])
         return "blocked"

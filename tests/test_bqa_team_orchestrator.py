@@ -319,6 +319,32 @@ REASON: Replaced by the install smoke test issue.
             self.assertTrue(orchestrator.STATUS_MD.exists())
             self.assertIn("Completed done: 3", orchestrator.STATUS_MD.read_text())
 
+    def test_run_output_has_status_ignores_prompt_instructions(self):
+        orchestrator = load_orchestrator()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "dev_issue.out.txt"
+            output.write_text(
+                "- If blocked or requirements are ambiguous, output QUESTION_STATUS: OPEN with details.\n"
+                "Implementation completed without questions.\n"
+            )
+
+            self.assertFalse(orchestrator.run_output_has_status(output, "QUESTION_STATUS", "OPEN"))
+
+    def test_run_output_has_status_detects_explicit_status_line(self):
+        orchestrator = load_orchestrator()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "dev_issue.out.txt"
+            output.write_text(
+                "Developer cannot continue.\n"
+                "QUESTION_STATUS: OPEN\n"
+                "QUESTION_TYPE: REQUIREMENTS\n"
+                "BLOCKS_ISSUE: true\n"
+            )
+
+            self.assertTrue(orchestrator.run_output_has_status(output, "QUESTION_STATUS", "OPEN"))
+
     def test_parse_issue_dependencies_from_explicit_references(self):
         orchestrator = load_orchestrator()
 
