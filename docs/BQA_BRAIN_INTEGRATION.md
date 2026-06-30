@@ -5,7 +5,7 @@
 GitHub repository:
 
 ```text
-git@github.com:mshegolev/bqa-brain.git
+https://github.com/mshegolev/bqa-brain.git
 ```
 
 The repository is a private git-backed memory store. Its current contract keeps
@@ -64,7 +64,7 @@ From the `bqa-os` checkout:
 
 ```bash
 cd /opt/develop/bqa-os
-bqa brain connect git@github.com:mshegolev/bqa-brain.git
+bqa brain connect https://github.com/mshegolev/bqa-brain.git
 bqa brain pull
 bqa brain status
 ```
@@ -74,6 +74,9 @@ By default, current `bqa-os` stores the brain cache at:
 ```text
 $HOME/.bqa/brain
 ```
+
+The HTTPS repository URL is used in exported brain artifacts because the current
+`bqa-os` sanitizer treats SSH-style repository URLs as email-like text.
 
 ## Export Unified Team Artifacts
 

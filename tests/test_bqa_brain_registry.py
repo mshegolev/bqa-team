@@ -63,7 +63,7 @@ class BQABrainRegistryTests(unittest.TestCase):
         content = INTEGRATION_DOC.read_text(encoding="utf-8")
 
         for expected in [
-            "git@github.com:mshegolev/bqa-brain.git",
+            "https://github.com/mshegolev/bqa-brain.git",
             "bqa brain connect",
             "bqa brain pull",
             "scripts/bqa_brain_export.sh",

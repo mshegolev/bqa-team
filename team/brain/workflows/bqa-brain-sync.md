@@ -16,7 +16,7 @@ knowledge to the private `bqa-brain` repository.
 ## Commands
 
 ```bash
-bqa brain connect git@github.com:mshegolev/bqa-brain.git
+bqa brain connect https://github.com/mshegolev/bqa-brain.git
 bqa brain pull
 /opt/develop/bqa-team/scripts/bqa_brain_export.sh --brain-dir "$HOME/.bqa/brain"
 bqa brain sync --sanitize
