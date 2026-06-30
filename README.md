@@ -8,6 +8,17 @@ It is intentionally separated from `bqa-os`:
 - `bqa-team` = reusable team prompts, orchestrator scripts, issue templates, and workflow automation.
 - `.bqa-team/generated/`, `.bqa-team/logs/`, and `.bqa-team/state.json` are local runtime artifacts and should not be committed into product repositories.
 
+## Current status
+
+The current finalized project state is saved in [`PROJECT_STATE.md`](PROJECT_STATE.md).
+
+As of the latest saved state:
+
+- `bqa-team` has no open GitHub issues or pull requests.
+- `make verify` passes locally.
+- CI on `main` is green.
+- The remaining active work is in the target `bqa-os` backlog, not in this team-pack repository.
+
 ## What it automates
 
 ```text
