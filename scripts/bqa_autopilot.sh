@@ -186,6 +186,11 @@ heal_runtime_state() {
   local pid
   pid="$(cat "$PID_FILE")"
   if ! kill -0 "$pid" 2>/dev/null; then
+    if [[ -f "$START_EXIT_FILE" && "$(tr -d '[:space:]' < "$START_EXIT_FILE")" == "0" ]]; then
+      echo "Auto-heal: cleared completed autopilot PID $pid"
+      rm -f "$PID_FILE"
+      return 1
+    fi
     echo "Auto-heal: removed stale autopilot PID $pid"
     rm -f "$PID_FILE"
     return 0

@@ -30,6 +30,24 @@ class BQAAutopilotWrapperTests(unittest.TestCase):
             self.assertNotEqual(new_pid, 999999)
             self._stop_pid(new_pid)
 
+    def test_status_clears_cleanly_completed_pid_without_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            target_repo, team_repo = self._make_fake_runtime(tmp_path)
+            status_dir = target_repo / ".bqa-team" / "status"
+            status_dir.mkdir(parents=True, exist_ok=True)
+            pid_file = status_dir / "autopilot.pid"
+            pid_file.write_text("999999\n", encoding="utf-8")
+            (status_dir / "autopilot-start-exit").write_text("0", encoding="utf-8")
+
+            result = self._run_wrapper("status", target_repo, team_repo)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Auto-heal: cleared completed autopilot PID 999999", result.stdout)
+            self.assertIn("BQA autopilot: STOPPED", result.stdout)
+            self.assertNotIn("Started BQA autopilot.", result.stdout)
+            self.assertFalse(pid_file.exists())
+
     def test_status_autoheals_stale_running_pid_and_restarts(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
