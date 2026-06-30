@@ -141,6 +141,60 @@
       "destination": "memory/bqa-team-capability-index.md",
       "summary": "Unified index of BQA Team capabilities that should be preserved in git-backed brain memory.",
       "tags": ["capabilities", "memory-index", "bqa-team"]
+    },
+    {
+      "id": "bqa-os-capability-map",
+      "type": "memory_index",
+      "title": "BQA-OS Capability Map",
+      "source": "team/brain/memory/bqa-os-capability-map.md",
+      "destination": "memory/bqa-os-capability-map.md",
+      "summary": "Sanitized map of current bqa-os commands, architecture rules, and readiness posture.",
+      "tags": ["bqa-os", "capabilities", "commands"]
+    },
+    {
+      "id": "bqa-os-knowledge-extractor-state",
+      "type": "memory_index",
+      "title": "BQA-OS Knowledge Extractor State",
+      "source": "team/brain/memory/bqa-os-knowledge-extractor-state.md",
+      "destination": "memory/bqa-os-knowledge-extractor-state.md",
+      "summary": "Sanitized memory of the bqa build knowledge extractor MVP contract and validation flow.",
+      "tags": ["bqa-os", "knowledge-extractor", "build"]
+    },
+    {
+      "id": "bqa-os-real-project-pilot-flow",
+      "type": "memory_index",
+      "title": "BQA-OS Real Project Pilot Flow",
+      "source": "team/brain/memory/bqa-os-real-project-pilot-flow.md",
+      "destination": "memory/bqa-os-real-project-pilot-flow.md",
+      "summary": "Sanitized runbook for using bqa-os on real projects in local-first pilot mode.",
+      "tags": ["bqa-os", "pilot", "real-projects"]
+    },
+    {
+      "id": "bqa-os-workspace-jira-task-flow",
+      "type": "memory_index",
+      "title": "BQA-OS Workspace Jira Task Flow",
+      "source": "team/brain/memory/bqa-os-workspace-jira-task-flow.md",
+      "destination": "memory/bqa-os-workspace-jira-task-flow.md",
+      "summary": "Sanitized product memory for the Jira-key workspace startup flow.",
+      "tags": ["bqa-os", "jira", "workspace"]
+    },
+    {
+      "id": "bqa-os-brain-sync-contract",
+      "type": "memory_index",
+      "title": "BQA-OS Brain Sync Contract",
+      "source": "team/brain/memory/bqa-os-brain-sync-contract.md",
+      "destination": "memory/bqa-os-brain-sync-contract.md",
+      "summary": "Sanitized memory of the bqa-os to bqa-brain sync contract and commands.",
+      "tags": ["bqa-os", "brain", "sync"]
+    },
+    {
+      "id": "bqa-team-autopilot-operations",
+      "type": "memory_index",
+      "title": "BQA Team Autopilot Operations",
+      "source": "team/brain/memory/bqa-team-autopilot-operations.md",
+      "destination": "memory/bqa-team-autopilot-operations.md",
+      "summary": "Sanitized memory of BQA Team autopilot operation, stale process healing, and verification.",
+      "tags": ["bqa-team", "autopilot", "operations"]
     }
   ]
 }

@@ -94,7 +94,7 @@ if not dry_run:
         f"  generated_at: {generated_at}",
         "  source_registry: team/brain/registry.json",
         "sources:",
-        "  brain_repository: git@github.com:mshegolev/bqa-brain.git",
+        "  brain_repository: https://github.com/mshegolev/bqa-brain.git",
     ]
     for section in ["agents", "skills", "workflows", "rules", "guardrails", "memory_indexes"]:
         if section == "rules":
