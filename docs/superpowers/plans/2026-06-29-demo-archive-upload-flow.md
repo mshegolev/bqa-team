@@ -16,11 +16,11 @@
 - Create: `tests/test_demo_archive.py`
 - Create: `demo/fixtures/bqa-demo-archive.json`
 
-- [ ] **Step 1: Write failing fixture tests**
+- [x] **Step 1: Write failing fixture tests**
 
 Add tests that require the fixture to contain `manifest`, `sessions`, `agents`, `workflows`, `specs`, `knowledge`, and `recommendations`, and that scan serialized fixture text for forbidden private-data terms.
 
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
 
 Run:
 
@@ -30,11 +30,11 @@ python3 -m unittest tests.test_demo_archive -v
 
 Expected before the fixture exists: failure because `demo/fixtures/bqa-demo-archive.json` is missing.
 
-- [ ] **Step 3: Add synthetic fixture**
+- [x] **Step 3: Add synthetic fixture**
 
 Create a JSON fixture with fake BQA sessions, generated agents, workflows, specs, knowledge artifacts, and recommendations.
 
-- [ ] **Step 4: Run test to verify pass**
+- [x] **Step 4: Run test to verify pass**
 
 Run:
 
@@ -52,11 +52,11 @@ Expected after implementation: all fixture tests pass.
 - Create: `demo/site/styles.css`
 - Create: `demo/site/app.js`
 
-- [ ] **Step 1: Write failing static app tests**
+- [x] **Step 1: Write failing static app tests**
 
 Add tests that require the three static files, required UI labels, the bundled fixture path, and no network primitives.
 
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
 
 Run:
 
@@ -66,7 +66,7 @@ python3 -m unittest tests.test_demo_site -v
 
 Expected before app files exist: failure for missing `demo/site/index.html`.
 
-- [ ] **Step 3: Add static app**
+- [x] **Step 3: Add static app**
 
 Implement a three-column app matching `docs/design-assets/bqa-demo-archive-concept.png` direction:
 
@@ -76,7 +76,7 @@ Implement a three-column app matching `docs/design-assets/bqa-demo-archive-conce
 
 Use `FileReader` for uploaded JSON and a bundled sample loader that reads `../fixtures/bqa-demo-archive.json` only when served over HTTP. If direct file access blocks sample loading, show instructions and keep upload fully functional.
 
-- [ ] **Step 4: Run test to verify pass**
+- [x] **Step 4: Run test to verify pass**
 
 Run:
 
@@ -91,11 +91,11 @@ Expected after implementation: all static app tests pass.
 **Files:**
 - Modify: `.gitignore`
 
-- [ ] **Step 1: Include Serena ignore**
+- [x] **Step 1: Include Serena ignore**
 
 Keep `.serena/` ignored as local tool state.
 
-- [ ] **Step 2: Run full verification**
+- [x] **Step 2: Run full verification**
 
 Run:
 
@@ -105,7 +105,7 @@ make verify
 
 Expected: py_compile succeeds, shell syntax succeeds, and all unit tests pass.
 
-- [ ] **Step 3: Inspect workspace**
+- [x] **Step 3: Inspect workspace**
 
 Run:
 

@@ -22,7 +22,8 @@ for script in \
   bqa_team_evolve.sh \
   bqa_consent.sh \
   bqa_process_supervisor.sh \
-  bqa_devsecops_scan.sh
+  bqa_devsecops_scan.sh \
+  bqa_brain_export.sh
   do
     cp "$SOURCE_DIR/scripts/$script" "$TARGET_DIR/scripts/$script"
     chmod +x "$TARGET_DIR/scripts/$script"

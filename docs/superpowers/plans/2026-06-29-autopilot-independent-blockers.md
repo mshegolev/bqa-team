@@ -16,7 +16,7 @@
 - Modify: `tests/test_bqa_team_orchestrator.py`
 - Modify: `scripts/bqa_team_orchestrator.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add an assertion to `test_write_default_autopilot_config_creates_reusable_config`:
 
@@ -24,13 +24,13 @@ Add an assertion to `test_write_default_autopilot_config_creates_reusable_config
 self.assertFalse(saved["stop_on_fail"])
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python3 -m unittest tests.test_bqa_team_orchestrator.AutopilotTests.test_write_default_autopilot_config_creates_reusable_config -v`
 
 Expected: FAIL because `stop_on_fail` is currently `true`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Change `default_autopilot_config()`:
 
@@ -38,7 +38,7 @@ Change `default_autopilot_config()`:
 "stop_on_fail": False,
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run the same unittest command.
 
@@ -50,21 +50,21 @@ Expected: PASS.
 - Modify: `tests/test_bqa_team_orchestrator.py`
 - Modify: `scripts/bqa_team_orchestrator.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add a test that stubs `open_issue_snapshot()` with ready-dev issues, one blocked issue, and one ready-dev issue depending on the blocker. Call `list_candidate_issues(..., "bqa:ready-dev")` and expect only independent ready-dev issues.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python3 -m unittest tests.test_bqa_team_orchestrator.AutopilotTests.test_candidate_issues_skip_blocked_dependencies_with_label_filter -v`
 
 Expected: FAIL because the current implementation returns from `list_ready_issues()` before dependency filtering.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Make `list_candidate_issues()` load the full open issue snapshot, apply the requested label in Python, skip lifecycle labels, and skip issues whose dependencies point to blocked issues.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run: `python3 -m unittest tests.test_bqa_team_orchestrator -v`
 
@@ -75,11 +75,11 @@ Expected: PASS.
 **Files:**
 - Modify: `README.md`
 
-- [ ] **Step 1: Update README**
+- [x] **Step 1: Update README**
 
 Document that autopilot continues by default, skips blocked/dependent issues, and supports `--stop-on-fail` or config `stop_on_fail: true` for strict mode.
 
-- [ ] **Step 2: Run full verification**
+- [x] **Step 2: Run full verification**
 
 Run: `make verify`
 
